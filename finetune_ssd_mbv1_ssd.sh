@@ -1,0 +1,26 @@
+#!/bin/bash
+python finetune_multinomial.py  \
+ --data 'VOC' \
+ --arch 'base' \
+ --num_classes 21 \
+ --cv_dir '/data/jyj0805/InstaQNAS_MBv1_SSD/advantage_debug/prec+bops_thre/E8H48/ep05_th06_B70_lb30_finetune' \
+ --instassd_chkpt './MBv1_SSD/E8H48/agent_load/ckpt_E_199_A_62.078_R_1.86E+01_#_41.pth.tar' \
+ --agent_chkpt './MBv1_SSD/E8H48/agent_load/ckpt_E_199_A_62.078_R_1.86E+01_#_41.pth.tar' \
+ --resume_path './MBv1_SSD/E8H48/agent_load/ckpt_E_199_A_62.078_R_1.86E+01_#_41.pth.tar' \
+ --eval_path './finetune/eval_tr01_test' \
+ --resume \
+ --retraining 'True' \
+ --reward_type 'prec+bops_thre' \
+ --conf_threshold 0.1 \
+ --extras_wbit 8 \
+ --extras_abit 8 \
+ --head_wbit 8 \
+ --head_abit 8 \
+ --tr 0.1 \
+ --baseline 70 \
+ --baseline_min 30 \
+ --full_pretrain 'False' \
+ --lr_type 'cosine' \
+ --test_first \
+ --optimizer 'sgd' \
+ --lr 5e-4 --batch_size 24 --epochs 600 --gpu '5'

@@ -1,0 +1,28 @@
+#!/bin/bash
+python search_multinomial.py  \
+ --data 'VOC' \
+ --arch 'base' \
+ --num_classes 21 \
+ --cv_dir '/data/jyj0805/InstaQNAS_MBv1_SSD/prec_bops_thre/search_result/E6H6/prec_thre07' \
+ --instassd_chkpt '/data/jyj0805/InstaQNAS_MBv1_SSD/prec_bops_thre/search_result/E6H6/prec_thre07/ckpt_E_10_A_59.008_R_2.63E-01_#_207.pth.tar' \
+ --agent_chkpt '/data/jyj0805/InstaQNAS_MBv1_SSD/prec_bops_thre/search_result/E6H6/prec_thre07/ckpt_E_10_A_59.008_R_2.63E-01_#_207.pth.tar' \
+ --resume_path '/data/jyj0805/InstaQNAS_MBv1_SSD/prec_bops_thre/search_result/E6H6/prec_thre07/ckpt_E_10_A_59.008_R_2.63E-01_#_207.pth.tar' \
+ --sample_eval_path './sample_eval_test_07' \
+ --search_eval_path './search_eval_test_07' \
+ --resume \
+ --agent_lr 5e-4 \
+ --prec_thre 0.7 \
+ --reward_type 'prec+bops_thre' \
+ --conf_threshold 0.1 \
+ --pos_w 30 \
+ --neg_w 0 \
+ --prec_thre 0.6  \
+ --extras_wbit 6 \
+ --extras_abit 6 \
+ --head_wbit 6 \
+ --head_abit 6 \
+ --agent_lr_type 'cosine'  \
+ --full_pretrain 'False' \
+ --lr_type 'cosine' \
+ --optimizer 'sgd' \
+ --lr 5e-4 --batch_size 24 --epochs 300 --gpu '7'
