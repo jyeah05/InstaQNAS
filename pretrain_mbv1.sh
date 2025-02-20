@@ -1,4 +1,4 @@
-python main_ssd.py --data VOC \
+python pretrain_ssd.py --data VOC \
 --arch base \
 --batch-size 128 \
 --save '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/pretrained' \
