@@ -15,7 +15,7 @@ To reduce computational redundancy inherent in fixed-bit-width quantization, inp
 ### 1. Pretrain
 * Pretrain main network with randomly generated policies.
     * We used full-precision pretrain model of https://github.com/qfgaohao/pytorch-ssd
-    * Download the pretrained model and make `resume_path` argument the directory of the pretrained model
+    * Set the `resume_path` argument in `pretarin.sh` to the directory of the downloaded pretrained model
 ```shell
 sh pretrain_mbv1_fp.sh   
 sh pretrain_mbv1.sh
