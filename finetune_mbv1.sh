@@ -5,8 +5,8 @@ python search_multinomial.py  \
 --num_classes 21 \
 --finetune_only \
 --cv_dir '/data/jeesak/InstaQNAS/MBv1-SSD/fine-tune' \
---instassd_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/model_best.pth.tar' \
---agent_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/model_best.pth.tar' \
+--instassd_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
+--agent_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
 --retraining 'True' \
 --resume \
 --extras_wbit 4 \

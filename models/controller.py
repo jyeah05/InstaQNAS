@@ -344,7 +344,7 @@ class Policy300(nn.Module):
             if k.startswith('features.fc'):
                 continue
             new_state_dict[k] = v
-        return super(Policy224, self).load_state_dict(new_state_dict)
+        return super(Policy300, self).load_state_dict(new_state_dict)
 
     def forward(self, x):
         x = F.avg_pool2d(x, 2)

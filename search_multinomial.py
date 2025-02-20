@@ -269,8 +269,11 @@ def getModel(arch, **kargs):
 
     if args.instassd_chkpt:
         instanet_checkpoint = torch.load(args.instassd_chkpt)
-        new_state = remove_prefix(instanet_checkpoint['state_dict'], 'module.')
-        # new_state = remove_prefix(instanet_checkpoint['instanet'], 'module.')
+        if args.finetune_only or not args.retraining:
+            new_state = remove_prefix(instanet_checkpoint['instanet'], 'module.')
+        else:
+            new_state = remove_prefix(instanet_checkpoint['state_dict'], 'module.')
+        # 
         new_state.update(new_state)
         try:
             model.load_state_dict(new_state)
@@ -291,6 +294,7 @@ def get_agent(**kargs):
     elif args.arch_type == "V2+SSD_Lite":
         agent = Policy300([1,1,1,1], num_blocks=17, num_of_actions=len(args.action_list))
     if args.agent_chkpt:
+        breakpoint()
         checkpoint = torch.load(args.agent_chkpt)
         agent.load_state_dict(checkpoint['agent'])
         print("Loaded agent!")
