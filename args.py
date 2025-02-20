@@ -43,7 +43,9 @@ exp_group.add_argument('--seed', default=0, type=int,
                        help='random seed')
 exp_group.add_argument('--local_rank', type=int, default=0)    # kihwan. 220220. for DDP
 exp_group.add_argument('--dist', action='store_true')
+
 exp_group.add_argument('--ActQ', choices=['PACT', 'LSQ+', 'DoReFa'], default='PACT')
+exp_group.add_argument('--finetune_only', action='store_true')
 
 
 # dataset related

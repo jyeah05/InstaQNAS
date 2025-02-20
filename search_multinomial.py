@@ -612,9 +612,181 @@ def train_val_test():
             train_net(epoch, instanet, agent,trainer,  optimizer_net, train_loader, scores)
             best_map = test(epoch, instanet, agent, test_dataset, test_loader, trainer, predictor, ssd_config.config, lb, ub, scores)
 
+#############################################################################################################################################
+
+def fine_tune_net(epoch, instanet, agent, trainer,  optimizer_net, trainloader_ft, scores):
+    agent.eval()
+    instanet.train() # Note: instanet now refers to SSD
+    # set GT boxes
+    # breakpoint()
+    losses, regression_losses, classification_losses, lr = trainer.ssd_fine_tune(trainloader_ft, epoch, args.alpha)
+    print('FT E: {:3d} | Train loss {loss:.4f} | '
+              'Ref_loss@1 {reg_los:.4f} | '
+              ' Class_loss@5{cls_los:.4f} | '
+              ' LR {lr:.4f}  '
+              .format(epoch, loss=losses, reg_los=regression_losses, cls_los=classification_losses, lr=lr))
+    scores.append('FT E: {:3d} | Train loss {loss:.4f} | '
+              'Ref_loss@1 {reg_los:.4f} | '
+              ' Class_loss@5{cls_los:.4f} | '
+              ' LR {lr:.4f}  '
+              .format(epoch, loss=losses, reg_los=regression_losses, cls_los=classification_losses, lr=lr))
+    with open(os.path.join(args.cv_dir, 'scores.tsv'), 'w') as f:
+        print('\n'.join(scores), file=f)
+    return lr
+
+def fine_tune_val_test():
+    dt = {'num_classes':args.num_classes, 'augmentation':args.augmentation}
+    if 'V1' in args.arch_type or 'CAPP' in args.arch_type:
+        ssd_config = generate_mb1_ssd_config(args.image_size, args.iou_threshold, args.center_variance, args.size_variance) #prior, specs, thresholds
+    elif 'V2' in args.arch_type:
+        ssd_config = generate_mb2_ssd_config(args.image_size, args.iou_threshold, args.center_variance, args.size_variance) #prior, specs, thresholds
+    elif 'VGG' in args.arch_type:
+        ssd_config = generate_vgg_ssd_config(args.image_size, args.iou_threshold, args.center_variance, args.size_variance) #prior, specs, thresholds
+    else:
+        raise NotImplementedError("Not existing arch_type")
+    dt['ssd_config'] = ssd_config
+    args.config_of_data = dt
+    os.makedirs(args.cv_dir, exist_ok=True)
+    if args.resume is True:
+        if os.path.isfile(args.instassd_chkpt):
+            print("=> loading checkpoint '{}'".format(args.instassd_chkpt))
+            # checkpoint = torch.load(args.instassd_chkpt)
+            # set args based on checkpoint
+            # breakpoint()
+            if args.retraining is True:
+                args.start_epoch = 0
+            else:
+                args.start_epoch = torch.load(args.instassd_chkpt)['epoch'] + 1
+            instanet = getModel(**vars(args))
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, args.start_epoch - 1))
+        else:
+            print(
+                "=> no checkpoint found at '{}'".format(
+                    Fore.RED +
+                    args.resume_path +
+                    Fore.RESET),
+                file=sys.stderr)
+            return
+    else:
+        print("=> creating model '{}'".format(args.arch))
+        instanet = getModel(**vars(args))
+    if args.full_pretrain is True:
+        instanet.module.freeze_PACT_param()
+    else:
+        instanet.module.train_PACT_param()
+    if args.freeze_basenet is True:
+        instanet.module.freeze_base_param()
+    agent = get_agent(**vars(args))
+    if 'V1' in args.arch_type or 'CAPP' in args.arch_type:
+        predictor = create_mobilenetv1_ssd_predictor(instanet, ssd_config.config)
+    elif 'V2' in args.arch_type:
+        predictor = create_mobilenetv2_ssd_predictor(instanet, ssd_config.config)
+    else:
+        raise NotImplementedError("Not existing arch_type")
+    criterion = MultiboxLoss(ssd_config.config['priors'], iou_threshold=args.iou_threshold, neg_pos_ratio=3, center_variance=args.center_variance, size_variance=args.size_variance, conf_threshold=0.1)
+    optimizer_net = get_optimizer(instanet, args)
+    # set random seed
+    torch.manual_seed(args.seed)
+    Trainer = import_module(args.trainer).Trainer
+    trainer = Trainer(instanet, criterion, optimizer_net, args, agent)
+    # create dataloader
+    if args.evaluate == 'train':
+        sampler_train, _, _, train_loader, _, _ = getDataloaders(splits=('train'), **vars(args))
+        trainer.test(train_loader, best_epoch)
+        return
+    elif args.evaluate == 'val':
+        _, sampler_val, _, _, val_loader, _ = getDataloaders(splits=('val'), **vars(args))
+        trainer.test(val_loader, best_epoch)
+        return
+    elif args.evaluate == 'test':
+        _, _, sampler_test, _, _, test_loader = getDataloaders(splits=('test'), **vars(args))
+        trainer.test(test_loader, best_epoch)
+        return
+    else:
+        train_dataset, __, _, train_loader, __ , _ = getDataloaders(splits=('train'), **vars(args))
+
+
+    scores = ['timestamp\tepoch\tmode\t\mAP\treward\tnumOfPolicies\tBOPs (G)'] #2
+    best_map = 0.
+    best_epoch = 0
+    test_transform = TestTransform(args.image_size, np.array([127,127,127]), 128.0)
+    # test_transform = TestTransform(224, np.array([127,127,127]), 128.0)
+    test_dataset = VOCDataset('/home/jeesak/dataset/VOCdevkit/VOC2007TEST/', transform=test_transform, is_test=True)
+    test_loader =  torchdata.DataLoader(test_dataset, batch_size=int(args.batch_size*1.5), shuffle=False, num_workers=8, collate_fn=collate_voc_batch)
+    
+    trainer.set_true_labels(test_dataset)
+    if args.test_first:
+        map_real,  bops_real, policies_set =trainer.ssd_test(test_loader, 0, test_dataset, predictor, 
+                                                             args.eval_path, config=ssd_config.config, 
+                                                             conf_threshold=args.conf_threshold, 
+                                                             test_policy=args.test_policy, return_policy=True, atype=args.arch_type
+                                                            )
+        f1 = open(args.cv_dir+'/policies.log', 'w')
+        f1.write(str(policies_set))
+        f1.close()
+        log_str = 'TS - mAP: %.3f | #: %d | B (G): %.4f ' % (map_real, len(policies_set), bops_real)
+        print(log_str)
+        #reward_real = np.mean(reward_real.squeeze(1).squeeze(1).cpu().numpy())
+        bops_real = bops_real.cpu().numpy()
+        scores.append(('{}\t{}\t{}\t{:.3f}\t{:d}\t{:.4f}')
+                        .format(str(datetime.now()), 0, 'TS', map_real,
+                                len(policies_set), bops_real))
+
+
+        # with open(os.path.join(args.cv_dir, 'scores.tsv'), 'w') as f:
+        #     print('\n'.join(scores), file=f)
+        # best_map = test(0, instanet, agent, test_dataset, test_loader, trainer, predictor, ssd_config.config, args.baseline_min, args.baseline_max, scores)
+    for epoch in range(args.start_epoch, args.epochs+1):
+        print(" [*] EXP: {}".format(args.cv_dir))
+        
+        for i in range(args.train_net_iter):
+            print(" [*] Fine-tuning ... ")
+            fine_tune_net(epoch, instanet, agent, trainer, optimizer_net, train_loader, scores)
+            map_real,  bops_real, policies_set =trainer.ssd_test(test_loader, epoch, test_dataset, predictor, 
+                                                             args.eval_path, config=ssd_config.config, 
+                                                             conf_threshold=args.conf_threshold, 
+                                                             test_policy=args.test_policy, return_policy=True,
+                                                            )
+            f1 = open(args.cv_dir+'/policies.log', 'w')
+            f1.write(str(policies_set))
+            f1.close()
+            log_str = 'TS - mAP: %.3f | #: %d | B (G): %.4f ' % (map_real, len(policies_set), bops_real)
+            print(log_str)
+            bops_real = bops_real.cpu().numpy()
+            # breakpoint()
+            scores.append(('{}\t{}\t{}\t{:.3f}\t{:d}\t{:.4f}')
+                            .format(str(datetime.now()), epoch, 'TS', map_real,
+                                    len(policies_set), bops_real))
+
+
+            with open(os.path.join(args.cv_dir, 'scores.tsv'), 'w') as f:
+                print('\n'.join(scores), file=f)
+
+            agent_state_dict = agent.module.state_dict()
+            net_state_dict = instanet.module.state_dict()
+
+            state = {
+                'instanet': net_state_dict,
+                'agent': agent_state_dict,
+                'epoch': epoch,
+                'maps': map_real,
+                'bops': bops_real,
+                }
+            if map_real > best_map:
+                best_map = map_real
+                save_checkpoint(state, True, args.cv_dir, 'ckpt_E_%d_A_%.3f_#_%d.pth.tar' %
+                    (epoch, map_real, len(policies_set)))
+            save_checkpoint(state, False, args.cv_dir, 'latest.pth.tar')
+
 def main():
+    if args.finetune_only:
+        fine_tune_val_test()
+        exit()
+        
     train_val_test()
     
 
 if __name__ == "__main__":
+    
     main()
