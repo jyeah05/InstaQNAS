@@ -6,7 +6,7 @@ To reduce computational redundancy inherent in fixed-bit-width quantization, inp
 ## Overall Process
 ![Image](https://github.com/user-attachments/assets/56b23748-5aec-49c1-8564-7bbef1224635)
 
-## Reward Function for NAS
+## Reward Function for InstaQNAS
 ![Image](https://github.com/user-attachments/assets/f0c6a076-edc5-4fbe-9992-fa33603e78a0)
 - - -
 
