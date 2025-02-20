@@ -20,7 +20,7 @@ To reduce computational redundancy inherent in fixed-bit-width quantization, inp
     * checkpoint arguments in shell scripts
 * Prepare pytorch environment
 
-### 1. Pretrain
+### 1. Pretrain(Action)
 * Pretrain main network with randomly generated policies.
     * We used full-precision pretrain model of https://github.com/qfgaohao/pytorch-ssd
     * Set the `resume_path` argument in `pretarin.sh` to the directory of the downloaded pretrained model
@@ -28,7 +28,7 @@ To reduce computational redundancy inherent in fixed-bit-width quantization, inp
 sh pretrain_mbv1_fp.sh   
 sh pretrain_mbv1.sh
 ``` 
-### 2. Search
+### 2. Search(Exploration)
 * Train policy network to search the optimized main network bit policies.
 ```shell
 sh search_mbv1.sh
