@@ -4,8 +4,17 @@
 
 - - -
 
-### 1. Pretrain
+## 1. Pretrain
+```shell
+sh 
+``` 
+## 2. Search
+```shell
+sh search_policy_bops_thre_07.sh
+```
+## 3. Finetune
+```shell
+sh finetuen_ssd_mbv1_ssd.sh
+```
 
-### 2. Search
 
-### 3. Finetune
