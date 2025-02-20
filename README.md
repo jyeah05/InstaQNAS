@@ -13,7 +13,12 @@ To reduce computational redundancy inherent in fixed-bit-width quantization, inp
 ## How to train policy & main networks
 
 ### 0. Environment Setting
-
+* You need to change the directories for dataset and checkpoint for VOC training.
+    * L562, 575, 715 in `search_multinomial.py`
+    * L843 in `pretrain_ssd.py`
+    * L162, 165 in `dataloader.py`
+    * checkpoint arguments in shell scripts
+* Prepare pytorch environment
 
 ### 1. Pretrain
 * Pretrain main network with randomly generated policies.

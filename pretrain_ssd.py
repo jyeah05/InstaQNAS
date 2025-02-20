@@ -859,7 +859,7 @@ def train_val_test():
         _test_acc = trainer.test(val_loader=val_loader, epoch=0)
     # breakpoint()
     for epoch in range(args.start_epoch, args.epochs + 1):
-        train_loss, __ , train_cls_loss, lr, __ = trainer.ssd_train(
+        train_loss, __ , train_cls_loss, lr = trainer.ssd_train(
             train_loader, epoch, args.test_policy, 
             args.test_policy_all_bit, args.exclude_1bit
             )

@@ -4,9 +4,9 @@ python search_multinomial.py  \
 --ActQ 'LSQ+' \
 --num_classes 21 \
 --finetune_only \
---cv_dir '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/fine-tune' \
---instassd_chkpt '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
---agent_chkpt '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
+--cv_dir '/data/jeesak/InstaQNAS/MBv1-SSD/fine-tune' \
+--instassd_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
+--agent_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
 --retraining 'True' \
 --resume \
 --sample_eval_path './prec_thre06/sample_eval_test' \
@@ -22,7 +22,6 @@ python search_multinomial.py  \
 --lr_type 'cosine' \
 --optimizer 'sgd' \
 --image_size 300 \
---plot_result \
 --abit 4 \
 --action_list 3 4 5 \
 --lr 1e-5 --batch_size 64 --epochs 300 --gpu '0' 
