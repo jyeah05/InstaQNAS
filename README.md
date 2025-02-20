@@ -1,7 +1,10 @@
 # InstaQNAS
 
+## Overall Process
 ![Image](https://github.com/user-attachments/assets/56b23748-5aec-49c1-8564-7bbef1224635)
 
+## Reward Function for NAS
+![Image](https://github.com/user-attachments/assets/f0c6a076-edc5-4fbe-9992-fa33603e78a0)
 - - -
 
 ## How to train policy & main networks
