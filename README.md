@@ -22,5 +22,4 @@ sh search_policy_bops_thre_07.sh
 sh finetuen_ssd_mbv1_ssd.sh
 ```
 
-## Options
 

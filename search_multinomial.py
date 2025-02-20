@@ -112,6 +112,62 @@ def get_reward_thre_ori(precs_real,  elasped, baseline, ub, lb, is_batch=False, 
     #input("enter")
     return reward
 
+def get_reward_thre_2(precs_real,  elasped, baseline, ub, lb, is_batch=False, is_test=False):
+
+    #print("bops")
+    #print(elasped)
+    if is_batch:
+        elasped = torch.mean(elasped)
+    highest_point = - (lb - ub)*(ub - lb)/4
+    sparse_reward = -1 * (elasped - ub) * (elasped - lb) / highest_point
+    sparse_reward = torch.clamp(sparse_reward, min=0.)
+    
+    sparse_reward_neg = torch.pow(1.2, 
+                                  elasped-(lb-math.log(4/((ub-lb)*math.log(1.2)), 1.2))) - 4/((ub-lb)*math.log(1.2))# torch.pow(1.2, torch.log(4/(6*torch.log(1.2)))/torch.log(1.2))
+    sparse_reward_neg = torch.clamp(sparse_reward_neg, max=0., min=-1)
+    
+    sparse_reward_pos = torch.pow(1.2, 
+                                  -elasped+(ub+math.log(4/((ub-lb)*math.log(1.2)), 1.2))) - 4/((ub-lb)*math.log(1.2))# torch.pow(1.2, torch.log(4/(6*torch.log(1.2)))/torch.log(1.2))
+    sparse_reward_pos = torch.clamp(sparse_reward_pos, max=0., min=-1)
+
+    #match = (pred_idx == targets).dataa
+    if is_test:
+        precs_real = precs_real / 100
+    precs_real = torch.tensor(precs_real, requires_grad=False).cuda()
+    if is_batch:
+        precs_real = torch.mean(precs_real)
+        precs_real = precs_real.unsqueeze(0)
+        #print("precs")
+    #print(precs_real)
+    match = (precs_real >= args.prec_thre).data
+    precs_cache = precs_real.clone().data
+     
+    cost_reward = (sparse_reward + sparse_reward_neg + sparse_reward_pos) ** 1.0
+    precs_real *= args.pos_w
+    if is_batch:
+        cost_reward = cost_reward.cuda()
+        if is_test:
+            return precs_real
+        if match >0:
+            precs_real *= cost_reward
+    else: 
+        precs_real[match] *= cost_reward[match]
+        precs_real[match==0] = args.neg_w * ((args.prec_thre+0.1) - precs_cache[match==0])
+    #reward[match]   *= args.pos_w
+    #reward[match==0] = args.neg_w
+    #print("RTRA")
+    #print(precs_real)
+    #reward = reward * precs_real
+    #print("reward after multiplied")
+    #print(precs_real)
+
+    reward = precs_real.unsqueeze(1)
+    reward = reward.unsqueeze(2)
+
+    #print(reward)
+    #input("enter")
+    return reward
+
 def get_reward_thre(precs_real,  elasped, baseline, ub, lb, is_batch=False, is_test=False):
 
     #print("bops")
@@ -288,6 +344,9 @@ def train(epoch, instanet, agent, optimizer, searchloader, trainer, predictor, _
         elif args.reward_type == 'prec+bops_thre':
             reward_real = get_reward_thre(prec_real,  bops_real, args.baseline, ub, lb, is_batch=args.batch_reward)
             reward_sample = get_reward_thre(prec_sample,  bops_sample, args.baseline, ub, lb, is_batch=args.batch_reward)
+        elif args.reward_type == 'prec+bops_thre2':
+            reward_real = get_reward_thre_2(prec_real,  bops_real, args.baseline, ub, lb, is_batch=args.batch_reward)
+            reward_sample = get_reward_thre_2(prec_sample,  bops_sample, args.baseline, ub, lb, is_batch=args.batch_reward)
         elif args.reward_type == 'prec+bops_thre_ori':
             reward_real = get_reward_thre_ori(prec_real,  bops_real, args.baseline, ub, lb, is_batch=args.batch_reward)
             reward_sample = get_reward_thre_ori(prec_sample,  bops_sample, args.baseline, ub, lb, is_batch=args.batch_reward)
@@ -383,6 +442,8 @@ def test(epoch, instanet, agent, test_dataset, testloader, trainer, predictor, s
         reward_real = 0.01 * map_real
     elif args.reward_type == 'prec+bops_thre':
         reward_real = get_reward_thre(np.array(map_real), bops_real, args.baseline, ub, lb, is_batch=True, is_test=True)
+    elif args.reward_type == 'prec+bops_thre_2':
+        reward_real = get_reward_thre_2(np.array(map_real), bops_real, args.baseline, ub, lb, is_batch=True, is_test=True)
     elif args.reward_type == 'prec+bops_thre_ori':
         reward_real = get_reward_thre_ori(np.array(map_real), bops_real, args.baseline, ub, lb, is_batch=True, is_test=True)
     else:

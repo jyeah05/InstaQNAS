@@ -12,7 +12,7 @@ python search_multinomial.py  \
  --resume \
  --agent_lr 5e-4 \
  --prec_thre 0.7 \
- --reward_type 'prec+bops_thre' \
+ --reward_type 'prec+bops_thre2' \
  --conf_threshold 0.1 \
  --pos_w 30 \
  --neg_w 0 \
