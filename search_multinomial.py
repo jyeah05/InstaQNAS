@@ -21,9 +21,11 @@ import sys
 import torch.optim as optim
 from torch.distributions import Bernoulli
 ## models
-from models.instanas import QT_MobileNet_V1_224
+from models.instanas import QT_MobileNet_V1_224, QT_MobileNet_V1
+from models.instanas_v2lite import QT_MobileNet_V2
 from models.mb1_ssd import create_mobilenetv1_ssd_aug, create_mobilenetv1_ssd_predictor
-from models.controller import Policy224_HW, Policy224
+from models.mb2_ssd_lite import create_mobilenetv2_ssd_lite_aug, create_mobilenetv2_ssd_predictor
+from models.controller import Policy224_HW, Policy224, Policy300
 ## utils
 import utils
 from colorama import Fore
@@ -243,8 +245,18 @@ def get_reward_prec(prec):
     return reward
 
 def getModel(arch, **kargs):
-    base_net = QT_MobileNet_V1_224(num_classes=1001, full_pretrain=args.full_pretrain) #InstaNet
+    if 'V1' in args.arch_type:
+        base_net = QT_MobileNet_V1(num_classes=1000, full_pretrain=args.full_pretrain, ActQ=args.ActQ, abit=args.abit, action_list=args.action_list) #InstaNet
+    elif 'V2' in args.arch_type:
+        base_net = QT_MobileNet_V2(num_classes=1001, full_pretrain=args.full_pretrain, ActQ=args.ActQ, abit=args.abit, action_list=args.action_list)
+    # base_net = QT_MobileNet_V1_224(num_classes=1001, full_pretrain=args.full_pretrain) #InstaNet
     model = create_mobilenetv1_ssd_aug(base_net, num_classes=args.num_classes, wbit=args.extras_wbit, abit=args.extras_abit, head_wbit=args.head_wbit, head_abit=args.head_abit, config=args.config_of_data['ssd_config'].config, full_pretrain=args.full_pretrain) # SSD
+    if 'V1+SSD' == args.arch_type:
+        model = create_mobilenetv1_ssd_aug(base_net, num_classes=args.num_classes, wbit=args.extras_wbit, abit=args.extras_abit, head_wbit=args.head_wbit, head_abit=args.head_abit, 
+                                           config=args.config_of_data['ssd_config'].config, full_pretrain=args.full_pretrain, ActQ=args.ActQ) # SSD
+    elif 'V2+SSD_Lite' == args.arch_type:
+        model = create_mobilenetv2_ssd_lite_aug(base_net, num_classes=args.num_classes, wbit=args.extras_wbit, abit=args.extras_abit, head_wbit=args.head_wbit, head_abit=args.head_abit,
+                                                config=args.config_of_data['ssd_config'].config, full_pretrain=args.full_pretrain, ActQ=args.ActQ) # SSD
     if args.ssd_model:
         model.init_from_pretrained_ssd(args.ssd_model)
     if args.instanet_chkpt:
@@ -274,6 +286,10 @@ def getModel(arch, **kargs):
     return model
 def get_agent(**kargs):
     agent = Policy224_HW([1,1,1,1], num_blocks=13, num_of_actions=4)
+    if args.arch_type == "V1+SSD":
+        agent = Policy300([1,1,1,1], num_blocks=13, num_of_actions=len(args.action_list))
+    elif args.arch_type == "V2+SSD_Lite":
+        agent = Policy300([1,1,1,1], num_blocks=17, num_of_actions=len(args.action_list))
     if args.agent_chkpt:
         checkpoint = torch.load(args.agent_chkpt)
         agent.load_state_dict(checkpoint['agent'])
