@@ -1,6 +1,6 @@
 python pretrain_ssd.py --data VOC \
 --arch base \
---batch-size 128 \
+--batch_size 128 \
 --save '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/pretrained' \
 --resume \
 --resume_path '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/pretrained/FP/model_best.pth.tar' \

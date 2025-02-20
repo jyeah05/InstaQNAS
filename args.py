@@ -43,6 +43,7 @@ exp_group.add_argument('--seed', default=0, type=int,
                        help='random seed')
 exp_group.add_argument('--local_rank', type=int, default=0)    # kihwan. 220220. for DDP
 exp_group.add_argument('--dist', action='store_true')
+exp_group.add_argument('--ActQ', choices=['PACT', 'LSQ+', 'DoReFa'], default='PACT')
 
 
 # dataset related
@@ -156,6 +157,7 @@ optim_group.add_argument('--test_first', action='store_true')
 optim_group.add_argument('--freeze_basenet', action='store_true')
 optim_group.add_argument('--test_ImgNet', action='store_true')
 optim_group.add_argument('--instassd_chkpt', type=str, default=None)
+optim_group.add_argument('--from_fp_pretrain', action='store_true')
 
 search_group = arg_parser.add_argument_group('search',
                                             'search setting')
