@@ -346,6 +346,33 @@ class Linear_PactQ(nn.Linear):
         return output
 
 
+class aq_k(Function):
+    """
+        This is the quantization module.
+        The input and output should be all on the interval [0, 1].
+        bit is only defined on positive integer values.
+    """
+    @staticmethod
+    def forward(ctx, input, bit, scheme='original'):
+        assert bit > 0
+        # assert torch.all(input >= 0) and torch.all(input <= 1)
+        if scheme == 'original': # original dorefa
+            a = (1 << bit) - 1
+            res = torch.round(a * input)
+            res.div_(a)
+        elif scheme == 'modified':
+            a = 1 << bit
+            res = torch.floor(a * input)
+            res.clamp_(max=a - 1).div_(a)
+        else:
+            raise NotImplementedError
+        # assert torch.all(res >= 0) and torch.all(res <= 1)
+        return res
+    
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output, None, None
+
 class q_k(Function):
     """
         This is the quantization module.
@@ -612,6 +639,156 @@ class ActLSQ(_ActQ):
         # Method2:
         # x_q = FunLSQ.apply(x, self.scale, g, Qn, Qp)
         return x
+
+class DRFLSQConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size, stride=1, padding=0, dilation=1,
+                 groups=1, bias=True,
+                 same_padding=False,
+                 bitw_min=None, bita_min=None,
+                 pact_fp=False,
+                 double_side=False,
+                 weight_only=False, full_pretrain=False,
+                 input_quant=True, layer_name = None):
+        super(DRFLSQConv2d, self).__init__(
+            in_channels, out_channels,
+            kernel_size, stride=stride,
+            padding=padding if not same_padding else 0,
+            dilation=dilation,
+            groups=groups, bias=bias)
+        self.same_padding = same_padding
+        self.bitw_min = bitw_min
+        self.bita_min = bita_min
+        self.pact_fp = pact_fp
+        self.double_side = double_side
+        self.weight_only = weight_only
+        self.input_quant = input_quant
+        self.quant = q_k.apply
+        self.full_pretrain = full_pretrain
+        self.alpha = nn.Parameter(torch.tensor(10.0))
+        self.layer_name = layer_name
+        
+        self.scale = nn.Parameter(torch.Tensor(1))
+        self.register_buffer('init_state', torch.zeros(1))
+        
+        self.act = ActLSQ(in_features=in_channels, nbits_a=bita_min)
+
+    def forward(self, input):
+        #print("full pretrain in Qconv2d: %d" %(self.full_pretrain))
+        bitw = self.bitw_min
+        bita = self.bita_min
+        if self.full_pretrain is True:
+            bitw = 32
+            bita = 32
+        weight_quant_scheme = 'original'
+        act_quant_scheme = 'original'
+
+        if bitw == 0:
+            return nn.Identity()(input)
+
+        # weight quant --> DoReFa
+        if bitw < 32:
+            #print("qted")
+            weight = torch.tanh(self.weight) / torch.max(torch.abs(torch.tanh(self.weight)))
+            weight.add_(1.0)
+            weight.div_(2.0)
+            weight = self.quant(weight, bitw, weight_quant_scheme)
+            weight.mul_(2.0)
+            weight.sub_(1.0)
+            # breakpoint()
+        else:
+            weight = self.weight * 1.0
+        # breakpoint()
+        
+        # activation quant --> LSQ+
+        if (bita < 32 and self.input_quant):
+            input_val = self.act(input)
+        else:
+            input_val = input
+        #print(self.bias)
+        #print(self.stride)
+        y = nn.functional.conv2d(
+            input_val, weight, bias=self.bias, stride=self.stride, padding=self.padding,
+            dilation=self.dilation, groups=self.groups)
+        return y
+
+
+class DRFQConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size, stride=1, padding=0, dilation=1,
+                 groups=1, bias=True,
+                 same_padding=False,
+                 bitw_min=None, bita_min=None,
+                 pact_fp=False,
+                 double_side=False,
+                 weight_only=False, full_pretrain=False,
+                 input_quant=True, layer_name = None):
+        super(DRFQConv2d, self).__init__(
+            in_channels, out_channels,
+            kernel_size, stride=stride,
+            padding=padding if not same_padding else 0,
+            dilation=dilation,
+            groups=groups, bias=bias)
+        self.same_padding = same_padding
+        self.bitw_min = bitw_min
+        self.bita_min = bita_min
+        self.pact_fp = pact_fp
+        self.double_side = double_side
+        self.weight_only = weight_only
+        self.input_quant = input_quant
+        self.wquant = q_k.apply
+        self.aquant = aq_k.apply
+        self.full_pretrain = full_pretrain
+        self.alpha = nn.Parameter(torch.tensor(10.0))
+        self.layer_name = layer_name
+
+    def forward(self, input):
+        #print("full pretrain in Qconv2d: %d" %(self.full_pretrain))
+        # padding 300 --> 302됨
+        if self.same_padding:
+            ih, iw = input.size()[-2:]
+            kh, kw = self.weight.size()[-2:]
+            sh, sw = self.stride
+            oh, ow = math.ceil(ih / sh), math.ceil(iw / sw)
+            pad_h = max((oh - 1) * self.stride[0] + (kh - 1) * self.dilation[0] + 1 - ih, 0)
+            pad_w = max((ow - 1) * self.stride[1] + (kw - 1) * self.dilation[1] + 1 - iw, 0)
+            if pad_h > 0 or pad_w > 0:
+                input = nn.functional.pad(input, [pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2])
+        bitw = self.bitw_min
+        bita = self.bita_min
+        if self.full_pretrain is True:
+            bitw = 32
+            bita = 32
+        weight_quant_scheme = 'original'
+        act_quant_scheme = 'original'
+
+        if bitw == 0:
+            return nn.Identity()(input)
+
+        if bitw < 32:
+            #print("qted")
+            weight = torch.tanh(self.weight) / torch.max(torch.abs(torch.tanh(self.weight)))
+            weight.add_(1.0)
+            weight.div_(2.0)
+            weight = self.wquant(weight, bitw, weight_quant_scheme)
+            weight.mul_(2.0)
+            weight.sub_(1.0)
+            # breakpoint()
+        else:
+            weight = self.weight * 1.0
+        print(self.layer_name, weight.max().item())
+        
+        if (bita < 32 and not self.weight_only and self.input_quant):
+            input_val = self.aquant(input, bita, act_quant_scheme)
+        else:
+            input_val = input
+        print(self.layer_name, input_val.max().item())
+        # breakpoint()
+        y = nn.functional.conv2d(
+            input_val, weight, bias=self.bias, stride=self.stride, padding=self.padding,
+            dilation=self.dilation, groups=self.groups)
+        return y
+
 
 class LSQConv2d(nn.Conv2d):
     def __init__(self, in_channels, out_channels,
