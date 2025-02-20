@@ -215,7 +215,6 @@ def test_policies():
     # create dataloader
     test_transform = TestTransform(300, np.array([0,0,0]), 1.0)
     test_dataset = VOCDataset('/data/dataset/VOCdevkit/VOC2007TEST/', transform=test_transform, is_test=True)    
-    #test_dataset = VOCDataset('/data/dataset/VOCdevkit/VOC2007_easy', transform=test_transform, is_test=True)    
     test_loader =  torchdata.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, \
                collate_fn=collate_voc_batch, drop_last=False)
     trainer.set_true_labels(test_dataset)

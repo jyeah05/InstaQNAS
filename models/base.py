@@ -23,7 +23,8 @@ def conv3x3(in_planes, out_planes, stride=1):
 
 
 class Qconv_Seperable(nn.Module):
-    def __init__(self, in_planes, out_planes, kernel, stride, padding, wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False):
+    def __init__(self, in_planes, out_planes, kernel, stride, padding, wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False,
+                 layer_name=None, ActQ='PACT', bias=False):
         super(Qconv_Seperable, self).__init__()
         self.in_planes = in_planes
         self.out_planes = out_planes
@@ -32,13 +33,23 @@ class Qconv_Seperable(nn.Module):
         self.stride = stride
         self.wbit = wbit
         self.abit = abit
-        self.conv_sep = nn.Sequential(OrderedDict([
-            ('conv', QConv2d(self.in_planes, self.in_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, groups=self.in_planes, bias=False,  bitw_min=8, bita_min=8, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain)),
-            ('bn', nn.BatchNorm2d(self.in_planes)),
-            ('act', nn.ReLU(inplace=True)), ]))
-        self.conv_point = nn.Sequential(OrderedDict([
-            ('conv', QConv2d(self.in_planes, self.out_planes, kernel_size=1, stride=1, padding=0, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain)),
-            ]))
+        if ActQ == 'PACT':
+            self.conv_sep = nn.Sequential(OrderedDict([
+                ('conv', QConv2d(self.in_planes, self.in_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, groups=self.in_planes, bias=bias,  bitw_min=8, bita_min=8, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain)),
+                ('bn', nn.BatchNorm2d(self.in_planes)),
+                ('act', nn.ReLU(inplace=True)), ]))
+            self.conv_point = nn.Sequential(OrderedDict([
+                ('conv', QConv2d(self.in_planes, self.out_planes, kernel_size=1, stride=1, padding=0, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain)),
+                ]))
+        elif ActQ == 'LSQ+':
+            self.conv_sep = nn.Sequential(OrderedDict([
+                ('conv', LSQConv2d(self.in_planes, self.in_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, groups=self.in_planes, bias=bias,  bitw_min=8, bita_min=8, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                ('bn', nn.BatchNorm2d(self.in_planes)),
+                ('act', nn.ReLU(inplace=True)), ]))
+            self.conv_point = nn.Sequential(OrderedDict([
+                ('conv', LSQConv2d(self.in_planes, self.out_planes, kernel_size=1, stride=1, padding=0, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                ]))
+            
     def forward(self, x):
         x = self.conv_sep(x)
         out = self.conv_point(x)
@@ -57,77 +68,6 @@ class Qconv_Seperable(nn.Module):
         flops_1 = flops_1 * self.wbit * self.abit
         out = self.conv_point(x)
         return flops_0 + flops_1, out
-
-
-class Qconv_MERE(nn.Module):
-    def __init__(self, in_planes, out_planes, kernel, stride, padding, wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False):
-        super(Qconv_MERE, self).__init__()
-        self.in_planes = in_planes
-        self.out_planes = out_planes
-        self.kernel = kernel
-        self.pad = padding
-        self.stride = stride
-        self.wbit = wbit
-        self.abit = abit
-        self.conv_q = nn.Sequential(OrderedDict([
-            ('conv', QConv2d(self.in_planes, self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain)),
-            ]))
-    def forward(self, x):
-        out = self.conv_q(x)
-        return out
-    def get_flops(self, x):
-        flops = count_conv_flop(self.conv_q.conv, x)
-        out = self.conv_q(x)
-        return flops, out
-    def get_bops(self, x):
-        flops = count_conv_flop(self.conv_q.conv, x)
-        flops = flops * self.wbit * self.abit
-        out = self.conv_q(x)
-        return flops, out
-class QconvBlock_BIAS(nn.Module):
-    def __init__(self, in_planes, out_planes, kernel, stride, padding, wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False):
-        super(QconvBlock_BIAS, self).__init__()
-        self.in_planes = in_planes
-        self.out_planes = out_planes
-        self.kernel = kernel
-        self.pad = padding
-        self.stride = stride
-        self.wbit = wbit
-        self.abit = abit
-        self.conv_q = nn.Sequential(OrderedDict([
-            ('conv', QConv2d(self.in_planes, out_channels=self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain)),
-            ('act', nn.ReLU(inplace=True)),]))
-    def forward(self, x):
-        out = self.conv_q(x)
-        return out
-    def get_flops(self, x):
-        flops = count_conv_flop(self.conv_q.conv, x)
-        out = self.conv_q(x)
-        return flops, out
-    def get_bops(self, x):
-        flops = count_conv_flop(self.conv_q.conv, x)
-        flops = flops * self.wbit * self.abit
-        out = self.conv_q(x)
-        return flops, out
-class QLinearBlock(nn.Module):
-    def __init__(self, in_planes, out_planes, wbit=8, abit=8, weight_only=False, full_pretrain=False):
-        super(QLinearBlock, self).__init__()
-        self.in_planes = in_planes
-        self.out_planes = out_planes
-        self.wbit = wbit
-        self.abit = abit
-        self.linear = QLinear(self.in_planes, self.out_planes, bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, full_pretrain=full_pretrain)
-    def forward(self, x):
-        out = self.linear(x)
-        return out
-    def get_flops(self, x):
-        flops = self.linear.weight.numel()
-        out = self.linear(x)
-        return flops, out
-    def get_bops(self, x):
-        flops = self.linear.weight.numel()* self.wbit * self.abit
-        out = self.linear(x)
-        return flops, out 
 class Qconv_Seperable_MBv1(nn.Module):
     def __init__(self, in_planes, out_planes, kernel, stride, padding, wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False):
         super(Qconv_Seperable_MBv1, self).__init__()
@@ -163,9 +103,13 @@ class Qconv_Seperable_MBv1(nn.Module):
         out = self.conv_point(x)
         return flops_0 + flops_1, out
 
-class QconvBlock(nn.Module):
-    def __init__(self, in_planes, out_planes, kernel, stride, padding, wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False):
-        super(QconvBlock, self).__init__()
+
+
+class Qconv_MERE(nn.Module):
+    def __init__(self, in_planes, out_planes, kernel, stride, padding, 
+                 wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False,
+                 bn=False, layer_name=None, ActQ='PACT'): # for VGG
+        super(Qconv_MERE, self).__init__()
         self.in_planes = in_planes
         self.out_planes = out_planes
         self.kernel = kernel
@@ -173,10 +117,47 @@ class QconvBlock(nn.Module):
         self.stride = stride
         self.wbit = wbit
         self.abit = abit
-        self.conv_q = nn.Sequential(OrderedDict([
-            ('conv', QConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, bias=False,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=True, full_pretrain=full_pretrain)),
-            ('bn', nn.BatchNorm2d(self.out_planes)),
-            ('act', nn.ReLU(inplace=True)),]))
+        if ActQ == 'PACT':
+            if bn:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('bn', nn.BatchNorm2d(in_planes)),
+                    ('conv', QConv2d(self.in_planes, self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                    ]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', QConv2d(self.in_planes, self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                    ]))
+        elif ActQ == 'LSQ+':
+            if bn:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('bn', nn.BatchNorm2d(in_planes)),
+                    ('conv', LSQConv2d(self.in_planes, self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                    ]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', LSQConv2d(self.in_planes, self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                    ]))
+        elif ActQ=='DoReFa':
+            if bn:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('bn', nn.BatchNorm2d(in_planes)),
+                    ('conv', DRFQConv2d(self.in_planes, self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                    ]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', DRFQConv2d(self.in_planes, self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                    ]))
+        elif ActQ=='LSQ-DRF':
+            if bn:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('bn', nn.BatchNorm2d(in_planes)),
+                    ('conv', DRFLSQConv2d(self.in_planes, self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                    ]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', DRFLSQConv2d(self.in_planes, self.out_planes, kernel_size=self.kernel, stride=self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, layer_name=layer_name)),
+                    ]))
+        
     def forward(self, x):
         out = self.conv_q(x)
         return out
@@ -189,19 +170,60 @@ class QconvBlock(nn.Module):
         flops = flops * self.wbit * self.abit
         out = self.conv_q(x)
         return flops, out
+    
 class QconvBlock_BIAS(nn.Module):
-    def __init__(self, in_planes, out_planes, kernel, stride, padding, wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False):
+    def __init__(self, in_planes, out_planes, kernel, stride, padding, dilation=1, 
+                 wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False,
+                 pool=None, input_quant=True, bias=True, layer_name=None, ActQ='PACT'):
         super(QconvBlock_BIAS, self).__init__()
         self.in_planes = in_planes
         self.out_planes = out_planes
         self.kernel = kernel
         self.pad = padding
         self.stride = stride
+        self.dilation = dilation
         self.wbit = wbit
         self.abit = abit
-        self.conv_q = nn.Sequential(OrderedDict([
-            ('conv', QConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, bias=True,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=True, full_pretrain=full_pretrain)),
-            ('act', nn.ReLU(inplace=True)),]))
+        if ActQ == 'PACT':
+            if pool is not None:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('pool', pool),
+                    ('conv', QConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, dilation=dilation, padding=self.pad, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('act', nn.ReLU(inplace=True)),]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', QConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, dilation=dilation, padding=self.pad, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('act', nn.ReLU(inplace=True)),]))
+        elif ActQ == 'LSQ+':
+            if pool is not None:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('pool', pool),
+                    ('conv', LSQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, dilation=dilation, padding=self.pad, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('act', nn.ReLU(inplace=True)),]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', LSQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, dilation=dilation, padding=self.pad, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('act', nn.ReLU(inplace=True)),]))
+        elif ActQ == 'DoReFa':
+            if pool is not None:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('pool', pool),
+                    ('conv', DRFQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, dilation=dilation, padding=self.pad, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('act', nn.ReLU(inplace=True)),]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', DRFQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, dilation=dilation, padding=self.pad, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('act', nn.ReLU(inplace=True)),]))
+        elif ActQ == 'LSQ-DRF':
+            if pool is not None:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('pool', pool),
+                    ('conv', DRFLSQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, dilation=dilation, padding=self.pad, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('act', nn.ReLU(inplace=True)),]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', DRFLSQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, dilation=dilation, padding=self.pad, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('act', nn.ReLU(inplace=True)),]))
     def forward(self, x):
         out = self.conv_q(x)
         return out
@@ -215,8 +237,87 @@ class QconvBlock_BIAS(nn.Module):
         out = self.conv_q(x)
         return flops, out
 
+
+
+class QconvBlock(nn.Module):
+    def __init__(self, in_planes, out_planes, kernel, stride, padding, dilation=1, 
+                 wbit=8, abit=8, weight_only=False, same_padding=True, full_pretrain=False,
+                 bias=False, pool=None, ceil_mode=False, input_quant=True, layer_name=None, ActQ='PACT'): # for VGG layers
+        super(QconvBlock, self).__init__()
+        self.in_planes = in_planes
+        self.out_planes = out_planes
+        self.kernel = kernel
+        self.pad = padding
+        self.stride = stride
+        self.dilation = dilation
+        self.wbit = wbit
+        self.abit = abit
+        if ActQ == 'PACT':
+            if pool is not None:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('pool', pool),
+                    ('conv', QConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, dilation=self.dilation, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('bn', nn.BatchNorm2d(self.out_planes)),
+                    ('act', nn.ReLU(inplace=True)),
+                ]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', QConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, dilation=self.dilation, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('bn', nn.BatchNorm2d(self.out_planes)),
+                    ('act', nn.ReLU(inplace=True)),]))
+        elif ActQ == 'LSQ+':
+            if pool is not None:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('pool', pool),
+                    ('conv', LSQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, dilation=self.dilation, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('bn', nn.BatchNorm2d(self.out_planes)),
+                    ('act', nn.ReLU(inplace=True)),
+                ]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', LSQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, dilation=self.dilation, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('bn', nn.BatchNorm2d(self.out_planes)),
+                    ('act', nn.ReLU(inplace=True)),]))
+        elif ActQ == 'DoReFa':
+            if pool is not None:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('pool', pool),
+                    ('conv', DRFQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, dilation=self.dilation, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('bn', nn.BatchNorm2d(self.out_planes)),
+                    ('act', nn.ReLU(inplace=True)),
+                ]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', DRFQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, dilation=self.dilation, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('bn', nn.BatchNorm2d(self.out_planes)),
+                    ('act', nn.ReLU(inplace=True)),]))
+        elif ActQ == 'LSQ-DRF':
+            if pool is not None:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('pool', pool),
+                    ('conv', DRFLSQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, dilation=self.dilation, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('bn', nn.BatchNorm2d(self.out_planes)),
+                    ('act', nn.ReLU(inplace=True)),
+                ]))
+            else:
+                self.conv_q = nn.Sequential(OrderedDict([
+                    ('conv', DRFLSQConv2d(self.in_planes, self.out_planes, self.kernel, self.stride, padding=self.pad, dilation=self.dilation, bias=bias,  bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, same_padding=same_padding, full_pretrain=full_pretrain, input_quant=input_quant, layer_name=layer_name)),
+                    ('bn', nn.BatchNorm2d(self.out_planes)),
+                    ('act', nn.ReLU(inplace=True)),]))
+    def forward(self, x):
+        out = self.conv_q(x)
+        return out
+    def get_flops(self, x):
+        flops = count_conv_flop(self.conv_q.conv, x)
+        out = self.conv_q(x)
+        return flops, out
+    def get_bops(self, x):
+        flops = count_conv_flop(self.conv_q.conv, x)
+        flops = flops * self.wbit * self.abit
+        out = self.conv_q(x)
+        return flops, out
 class QuantMBBlock(nn.Module):
-    def __init__(self, in_planes, out_planes, stride, kernel, expansion=1, wbit=8, abit=8, full_pretrain=False):
+    def __init__(self, in_planes, out_planes, stride, kernel, expansion=1, wbit=8, abit=8, full_pretrain=False, layer_name=None, ActQ='PACT'):
         super(QuantMBBlock, self).__init__()
         self.identity = stride == 1 and in_planes == out_planes
         self.stride = stride
@@ -228,12 +329,36 @@ class QuantMBBlock(nn.Module):
         self.abit = abit
 
         planes = int(round(expansion * in_planes * self.multiplier))
-        self.conv1 = QConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=kernel//2, groups=planes, bias=False, bitw_min=8, bita_min=8, full_pretrain=full_pretrain)
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = QConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
-        self.bn2 = nn.BatchNorm2d(out_planes)
-        self.relu2 = nn.ReLU(inplace=True)
+        
+        if ActQ=='PACT':
+            #self.conv1 = QConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=kernel//2, groups=planes, bias=False, bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
+            self.conv1 = QConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=kernel//2, groups=planes, bias=False, bitw_min=8, bita_min=8, full_pretrain=full_pretrain, layer_name=layer_name+'_dw')
+            self.bn1 = nn.BatchNorm2d(planes)
+            self.relu1 = nn.ReLU(inplace=True)
+            self.conv2 = QConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain, layer_name=layer_name+'_pw')
+            self.bn2 = nn.BatchNorm2d(out_planes)
+            self.relu2 = nn.ReLU(inplace=True)
+        elif ActQ=='LSQ+':
+            self.conv1 = LSQConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=kernel//2, groups=planes, bias=False, bitw_min=8, bita_min=8, full_pretrain=full_pretrain, layer_name=layer_name+'_dw')
+            self.bn1 = nn.BatchNorm2d(planes)
+            self.relu1 = nn.ReLU(inplace=True)
+            self.conv2 = LSQConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain, layer_name=layer_name+'_pw')
+            self.bn2 = nn.BatchNorm2d(out_planes)
+            self.relu2 = nn.ReLU(inplace=True)
+        elif ActQ=='DoReFa':
+            self.conv1 = DRFQConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=kernel//2, groups=planes, bias=False, bitw_min=8, bita_min=8, full_pretrain=full_pretrain, layer_name=layer_name+'_dw')
+            self.bn1 = nn.BatchNorm2d(planes)
+            self.relu1 = nn.ReLU(inplace=True)
+            self.conv2 = DRFQConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain, layer_name=layer_name+'_pw')
+            self.bn2 = nn.BatchNorm2d(out_planes)
+            self.relu2 = nn.ReLU(inplace=True)
+        elif ActQ=='LSQ-DRF':
+            self.conv1 = DRFLSQConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=kernel//2, groups=planes, bias=False, bitw_min=8, bita_min=8, full_pretrain=full_pretrain, layer_name=layer_name+'_dw')
+            self.bn1 = nn.BatchNorm2d(planes)
+            self.relu1 = nn.ReLU(inplace=True)
+            self.conv2 = DRFLSQConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain, layer_name=layer_name+'_pw')
+            self.bn2 = nn.BatchNorm2d(out_planes)
+            self.relu2 = nn.ReLU(inplace=True)
 
 
 
@@ -249,6 +374,7 @@ class QuantMBBlock(nn.Module):
         flops = flop0 + flop1
         return flops, out
     def get_bops(self, x ):
+        #flop0 = count_conv_flop(self.conv1, x) * self.wbit * self.abit
         flop0 = count_conv_flop(self.conv1, x) * 8 * 8
         out = self.relu1(self.bn1(self.conv1(x)))
         flop1 = count_conv_flop(self.conv2, out)* self.wbit* self.abit ## JYC: depthwise bit is fixed as 8bit.
@@ -256,59 +382,112 @@ class QuantMBBlock(nn.Module):
         
         flops = flop0 + flop1
         return flops, out
+    
+class QLinearBlock(nn.Module):
+    def __init__(self, in_planes, out_planes, wbit=8, abit=8, weight_only=False, full_pretrain=False):
+        super(QLinearBlock, self).__init__()
+        self.in_planes = in_planes
+        self.out_planes = out_planes
+        self.wbit = wbit
+        self.abit = abit
+        self.linear = QLinear(self.in_planes, self.out_planes, bitw_min=self.wbit, bita_min=self.abit, weight_only=weight_only, full_pretrain=full_pretrain)
+    def forward(self, x):
+        out = self.linear(x)
+        return out
+    def get_flops(self, x):
+        flops = self.linear.weight.numel()
+        out = self.linear(x)
+        return flops, out
+    def get_bops(self, x):
+        flops = self.linear.weight.numel()* self.wbit * self.abit
+        out = self.linear(x)
+        return flops, out 
+
 
 class QuantInvertedResBlock(nn.Module):
-    def __init__(self, in_planes, out_planes, stride, kernel, expansion=1, wbit=8, abit=8, full_pretrain=False):
+    def __init__(self, in_planes, out_planes, stride, kernel, expansion=1, wbit=8, abit=8, full_pretrain=False, ActQ='PACT', layer_name=None):
         super(QuantInvertedResBlock, self).__init__()
         self.identity = stride == 1 and in_planes == out_planes
         self.stride = stride
-        self.multiplier = 1.0
+        self.expansion = expansion
         self.lat = 0
         self.flops = 0
         self.params = 0
         self.wbit = wbit
         self.abit = abit
+        self.out = None
 
-        planes = int(round(expansion * in_planes * self.multiplier))
-        self.conv1 = QConv2d(in_planes, planes, kernel_size=1, stride=1, padding=0, bias=False, bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.conv2 = QConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=kernel//2, groups=planes, bias=False, bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.conv3 = QConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
-        self.bn3 = nn.BatchNorm2d(out_planes)
-
-        self.shortcut = nn.Sequential()
-        if stride == 1 and in_planes != out_planes:
-            self.shortcut = nn.Sequential(
-                QConv2d(in_planes, out_planes, kernel_size=1, stride=stride, padding=0, bias=False, bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain),
-                nn.BatchNorm2d(out_planes),
-            )
+        planes = round(expansion * in_planes)
+        
+        if ActQ == 'PACT':
+            
+            if self.expansion == 1:
+                self.conv1 = QConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=1, groups=planes, bias=False, bitw_min=8, bita_min=8, full_pretrain=full_pretrain)
+                self.bn1 = nn.BatchNorm2d(planes)
+                self.conv2 = QConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
+                self.bn2 = nn.BatchNorm2d(out_planes)
+                self.conv3 = None
+            else:
+                self.conv1 = QConv2d(in_planes, planes, kernel_size=1, stride=1, padding=0, bias=False, bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
+                self.bn1 = nn.BatchNorm2d(planes)
+                self.conv2 = QConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=kernel//2, groups=planes, bias=False, bitw_min=8, bita_min=8, full_pretrain=full_pretrain)
+                self.bn2 = nn.BatchNorm2d(planes)
+                self.conv3 = QConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
+                self.bn3 = nn.BatchNorm2d(out_planes)
+        elif ActQ == 'LSQ+':
+            if self.expansion == 1:
+                self.conv1 = LSQConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=1, groups=planes, bias=False, bitw_min=8, bita_min=8, full_pretrain=full_pretrain)
+                self.bn1 = nn.BatchNorm2d(planes)
+                self.conv2 = LSQConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
+                self.bn2 = nn.BatchNorm2d(out_planes)
+                self.conv3 = None
+            else:
+                self.conv1 = LSQConv2d(in_planes, planes, kernel_size=1, stride=1, padding=0, bias=False, bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
+                self.bn1 = nn.BatchNorm2d(planes)
+                self.conv2 = LSQConv2d(planes, planes, kernel_size=kernel, stride=stride, padding=kernel//2, groups=planes, bias=False, bitw_min=8, bita_min=8, full_pretrain=full_pretrain)
+                self.bn2 = nn.BatchNorm2d(planes)
+                self.conv3 = LSQConv2d(planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False,  bitw_min=self.wbit, bita_min=self.abit, full_pretrain=full_pretrain)
+                self.bn3 = nn.BatchNorm2d(out_planes)
 
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
+        self.out = out
         out = F.relu(self.bn2(self.conv2(out)))
-        out = self.bn3(self.conv3(out))
+        if self.conv3 is not None:
+            out = self.bn3(self.conv3(out))
         if self.identity:
             out = out + x
         return out
     def get_flops(self, x ):
         flop0 = count_conv_flop(self.conv1, x)
         out = F.relu(self.bn1(self.conv1(x)))
+        self.out = out
         flop1 = count_conv_flop(self.conv2, out)
         out = F.relu(self.bn2(self.conv2(out)))
-        flop2 = count_conv_flop(self.conv3, out)
-        out = self.bn3(self.conv3(out))
+        flop2 =0
+        if self.conv3 is not None:
+            flop2 = count_conv_flop(self.conv3, out)
+            out = self.bn3(self.conv3(out))
         if self.identity:
             out = out + x
         flops = flop0 + flop1 + flop2
         return flops, out
     def get_bops(self, x ):
-        flop0 = count_conv_flop(self.conv1, x) * self.wbit * self.abit
+        flop0 = count_conv_flop(self.conv1, x)
         out = F.relu(self.bn1(self.conv1(x)))
-        flop1 = count_conv_flop(self.conv2, out)* 2* 2 ## JYC: depthwise bit is fixed as 8bit.
+        self.out = out
+        flop1 = count_conv_flop(self.conv2, out)
         out = F.relu(self.bn2(self.conv2(out)))
-        flop2 = count_conv_flop(self.conv3, out)* self.wbit * self.abit
-        out = self.bn3(self.conv3(out))
+        flop2 =0
+        if self.conv3 is not None:
+            flop2 = count_conv_flop(self.conv3, out) * self.wbit * self.abit
+            out = self.bn3(self.conv3(out))
+            flop0 = flop0 * self.wbit * self.abit
+            flop1 = flop1 * 8 * 8
+        else:
+            flop0 = flop0 * 8 * 8
+            flop1 = flop1 * self.wbit * self.abit
+            flop2 = 0 
         if self.identity:
             out = out + x
         flops = flop0 + flop1 + flop2
@@ -421,6 +600,7 @@ class DownsampleB(nn.Module):
     def forward(self, x):
         x = self.avg(x)
         return torch.cat([x] + [x.mul(0)] * (self.expand_ratio - 1), 1)
+
 
 
 

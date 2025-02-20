@@ -520,3 +520,177 @@ class QLinear(nn.Linear):
         else:
             input_val = input
         return nn.functional.linear(input_val, weight, bias)
+
+def grad_scale(x, scale):
+    y = x
+    y_grad = x * scale
+    return y.detach() - y_grad.detach() + y_grad
+
+def round_pass(x):
+    y = x.round()
+    y_grad = x
+    return y.detach() - y_grad.detach() + y_grad
+
+class ActLSQ(_ActQ):
+    def __init__(self, in_features, nbits_a=4, mode='layer_wise', **kwargs):
+        super(ActLSQ, self).__init__(in_features=in_features, nbits=nbits_a, mode=mode)
+        # print(self.alpha.shape, self.zero_point.shape)
+        self.nbits = nbits_a
+    def forward(self, x):
+        if self.scale is None:
+            return x
+
+        if self.training and self.init_state == 0:
+            # The init alpha for activation is very very important as the experimental results shows.
+            # Please select a init_rate for activation.
+            # self.alpha.data.copy_(x.max() / 2 ** (self.nbits - 1) * self.init_rate)
+            if x.min() < -1e-5:
+                self.signed.data.fill_(1)
+            # print(self.signed)
+            if self.signed == 1:
+                Qn = -2 ** (self.nbits - 1)
+                Qp = 2 ** (self.nbits - 1) - 1
+            else:
+                Qn = 0
+                Qp = 2 ** self.nbits - 1
+            self.scale.data.copy_(2 * x.abs().mean() / math.sqrt(Qp))
+            self.zero_point.data.copy_(self.zero_point.data * 0.9 + 0.1 * (torch.min(x.detach()) - self.scale.data * Qn))
+            self.init_state.fill_(1)
+        
+        # print(self.signed)
+
+        if self.signed == 1:
+            Qn = -2 ** (self.nbits - 1)
+            Qp = 2 ** (self.nbits - 1) - 1
+        else:
+            Qn = 0
+            Qp = 2 ** self.nbits - 1
+
+        g = 1.0 / math.sqrt(x.numel() * Qp)
+
+        # Method1:
+        zero_point = (self.zero_point.round() - self.zero_point).detach() + self.zero_point
+        scale = grad_scale(self.scale, g)
+        zero_point = grad_scale(zero_point, g)
+        # x = round_pass((x / scale).clamp(Qn, Qp)) * scale
+        if len(x.shape)==2:
+            scale = scale.unsqueeze(0)
+            zero_point = zero_point.unsqueeze(0)
+        elif len(x.shape)==3:
+            if x.shape[0] == scale.shape[0]:
+                scale = scale.unsqueeze(1).unsqueeze(2)
+                zero_point = zero_point.unsqueeze(1).unsqueeze(2)
+            elif x.shape[1] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(2)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(2)
+            elif x.shape[2] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(0)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(0)
+        elif len(x.shape)==4:
+            # A, B, C, D = x.shape
+            if x.shape[0] == scale.shape[0]:
+                scale = scale.unsqueeze(1).unsqueeze(2).unsqueeze(3)
+                zero_point = zero_point.unsqueeze(1).unsqueeze(2).unsqueeze(3)
+            elif x.shape[1] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+            elif x.shape[2] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(0).unsqueeze(3)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(0).unsqueeze(3)
+            elif x.shape[3] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(0).unsqueeze(0)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(0).unsqueeze(0)
+
+        # print(scale.shape, zero_point.shape)
+        # print(x.shape)
+        x = round_pass((x / scale + zero_point).clamp(Qn, Qp))
+        x = (x - zero_point) * scale
+        # x = x.clamp(Qn, Qp)
+        # q_x = round_pass(x)
+        # x_q = q_x * scale
+
+        # Method2:
+        # x_q = FunLSQ.apply(x, self.scale, g, Qn, Qp)
+        return x
+
+class LSQConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size, stride=1, padding=0, dilation=1,
+                 groups=1, bias=True,
+                 same_padding=False,
+                 bitw_min=None, bita_min=None,
+                 double_side=False,
+                 weight_only=False, full_pretrain=False,
+                 input_quant=True, layer_name = None, unsigned=True, batch_init=20):
+        super(LSQConv2d, self).__init__(
+            in_channels, out_channels,
+            kernel_size, stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups, bias=bias)
+        self.same_padding = same_padding
+        self.bitw_min = bitw_min
+        self.bita_min = bita_min
+        self.double_side = double_side
+        self.weight_only = weight_only
+        self.input_quant = input_quant
+        self.full_pretrain = full_pretrain
+        self.layer_name = layer_name
+        self.unsigned = unsigned
+        self.batch_init = batch_init
+        
+        self.scale = nn.Parameter(torch.Tensor(1))
+        self.register_buffer('init_state', torch.zeros(1))
+        
+        self.act = ActLSQ(in_features=in_channels, nbits_a=bita_min)
+        
+        # self.activation_quantizer = LSQPlusActivationQuantizer(a_bits=bita_min, all_positive=unsigned,batch_init = batch_init)
+        # self.weight_quantizer = LSQPlusWeightQuantizer(w_bits=bitw_min, all_positive=unsigned, per_channel=True,batch_init = batch_init)
+        
+    def forward(self, input):
+        #print("full pretrain in Qconv2d: %d" %(self.full_pretrain))
+        # padding 300 --> 302됨
+        bitw = self.bitw_min
+        bita = self.bita_min
+        if self.full_pretrain:
+            bitw = 32
+            bita = 32
+        # breakpoint()
+        if bitw == 0:
+            return nn.Identity()(input)
+        weight_quant_scheme = 'original'
+        act_quant_scheme = 'original'
+        
+        if bitw < 32:
+            # weight = self.weight_quantizer(self.weight)
+            Qn = -2 ** (bitw - 1)
+            Qp = 2 ** (bitw - 1) - 1
+            if self.training and self.init_state == 0:
+                # self.scale.data.copy_(self.weight.abs().max() / 2 ** (self.nbits - 1))
+                if Qp >0:
+                    self.scale.data.copy_(2 * self.weight.abs().mean() / math.sqrt(Qp))
+                else:
+                    self.scale.data.copy_(2 * self.weight.abs().mean() / math.sqrt(Qp+1))
+                # self.scale.data.copy_(self.weight.abs().max() * 2)
+                self.init_state.fill_(1)
+            
+            g = 1.0 / math.sqrt(self.weight.numel() * Qp) if Qp>0 else 1.0 / math.sqrt(self.weight.numel())
+            
+            scale = grad_scale(self.scale, g)
+            scale = scale.unsqueeze(1).unsqueeze(2).unsqueeze(3)
+            # breakpoint()
+            weight = round_pass((self.weight / scale).clamp(Qn, Qp)) * scale
+        else:
+            weight = self.weight * 1.0
+        # breakpoint()
+        
+        if (bita < 32 and self.input_quant):
+            input_val = self.act(input)
+        else:
+            input_val = input
+        #print(self.bias)
+        #print(self.stride)
+        y = nn.functional.conv2d(
+            input_val, weight, bias=self.bias, stride=self.stride, padding=self.padding,
+            dilation=self.dilation, groups=self.groups)
+        return y

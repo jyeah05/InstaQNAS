@@ -21,5 +21,8 @@ sh search_policy_bops_thre_07.sh
 ```shell
 sh finetuen_ssd_mbv1_ssd.sh
 ```
-
+### 4. Test
+```shell
+sh 
+```
 
