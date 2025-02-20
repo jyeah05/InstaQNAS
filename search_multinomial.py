@@ -712,7 +712,7 @@ def fine_tune_val_test():
     best_epoch = 0
     test_transform = TestTransform(args.image_size, np.array([127,127,127]), 128.0)
     # test_transform = TestTransform(224, np.array([127,127,127]), 128.0)
-    test_dataset = VOCDataset('/home/jeesak/dataset/VOCdevkit/VOC2007TEST/', transform=test_transform, is_test=True)
+    test_dataset = VOCDataset('/data/dataset/VOCdevkit/VOC2007TEST/', transform=test_transform, is_test=True)
     test_loader =  torchdata.DataLoader(test_dataset, batch_size=int(args.batch_size*1.5), shuffle=False, num_workers=8, collate_fn=collate_voc_batch)
     
     trainer.set_true_labels(test_dataset)

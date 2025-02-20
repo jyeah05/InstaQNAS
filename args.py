@@ -46,6 +46,9 @@ exp_group.add_argument('--dist', action='store_true')
 
 exp_group.add_argument('--ActQ', choices=['PACT', 'LSQ+', 'DoReFa'], default='PACT')
 exp_group.add_argument('--finetune_only', action='store_true')
+exp_group.add_argument('--test_policy_all_bit', default='8')
+exp_group.add_argument('--exclude_1bit', action='store_true')
+exp_group.add_argument('--test_policy', action='store_true')
 
 
 # dataset related

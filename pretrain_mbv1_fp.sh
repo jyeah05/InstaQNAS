@@ -1,7 +1,7 @@
 python pretrain_ssd.py --data VOC \
 --arch base \
 --batch_size 24 \
---save '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/pretrained/FP' \
+--save '/data/jeesak/InstaQNAS/MBv1-SSD/pretrained/FP' \
 --resume \
 --resume_path '/data/jeesak/InstaQNAS_MBv1_SSD/mbv1_ssd_fp.pth' \
 --retraining True  \

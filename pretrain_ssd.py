@@ -840,7 +840,7 @@ def train_val_test():
         test_transform = TestTransform(args.image_size, np.array([127,127,127]), 128.0)
     else:
         test_transform = TestTransform(args.image_size, np.array([0,0,0]), 1.0)
-    test_dataset = VOCDataset('/SHARE_ST/capp_storage/dataset/VOCdevkit/VOC2007TEST/', transform=test_transform, is_test=True)
+    test_dataset = VOCDataset('/data/dataset/VOCdevkit/VOC2007TEST/', transform=test_transform, is_test=True)
     if args.distributed:
         sampler_test = torch.utils.data.DistriubtedSampler(test_dataset) 
         test_loader = torchdata.DataLoader(test_dataset, sampler=sampler_test, batch_size=int(args.batch_size*1.5), shuffle=False, num_workers=4, collate_fn=collate_voc_batch)

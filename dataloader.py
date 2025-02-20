@@ -46,7 +46,7 @@ def cutout(mask_size, p, cutout_inside=False, mask_color=(0, 0, 0)):
 
 def getDataloaders(data, config_of_data, splits=['train', 'val', 'test'],
                    aug=True, use_validset=True, data_root='data', batch_size=64, normalized=True,
-                   num_workers=3, **kwargs):
+                   num_workers=3, input_norm=False, **kwargs):
     train_loader, val_loader, test_loader = None, None, None
     sampler_train, sampler_test = None, None
     if data.find('cifar10') >= 0:
@@ -125,21 +125,21 @@ def getDataloaders(data, config_of_data, splits=['train', 'val', 'test'],
             transforms.Normalize(mean, std)
         ])
         transform_test = transforms.Compose([
-            transforms.Scale(256),
+            transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize(mean, std)
         ])
         sampler_test , sampler_val = None, None
         if 'train' in splits:
-            train_set = dset.ImageFolder('/data/ImageNet/train', transform=transform_train)
+            train_set = dset.ImageFolder('/data/imagenet/raw-data/train', transform=transform_train)
             if kwargs['dist'] is True:
                 sampler_train = torch.utils.data.DistributedSampler(train_set)
                 train_loader = torchdata.DataLoader(train_set, sampler=sampler_train, batch_size=batch_size, shuffle=False, num_workers=16)
             else:
                 train_loader = torchdata.DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
         if 'val' in splits or 'test' in splits:
-            test_set = dset.ImageFolder('/data/ImageNet/val', transform=transform_test)
+            test_set = dset.ImageFolder('/data/imagenet/raw-data/val', transform=transform_test)
             if kwargs['dist'] is True:
                 sampler_test = torch.utils.data.DistributedSampler(test_set)
                 test_loader = torchdata.DataLoader(test_set, sampler=sampler_test, batch_size=batch_size, shuffle=False, num_workers=16)
@@ -151,29 +151,35 @@ def getDataloaders(data, config_of_data, splits=['train', 'val', 'test'],
     elif data.find('VOC') >= 0:
         print('loading ' + data)
         config = config_of_data['ssd_config'].config
-        transform_train = TrainAugmentation_qat1(300, np.array([0,0,0]), 1.0)
+        if input_norm:
+            transform_train = TrainAugmentation_qat1(config['image_size'], np.array([127,127,127]), 128.0) # fixed
+            test_transform = TestTransform(config['image_size'], np.array([127,127,127]), 128.0) # fixed
+        else:
+            transform_train = TrainAugmentation_qat1(config['image_size'], np.array([0,0,0]), 1.0) # fixed
+            test_transform = TestTransform(config['image_size'], np.array([0,0,0]), 1.0) # fixed
         target_transform = MatchPrior(config['priors'], config['center_variance'], config['size_variance'], 0.5)
-        test_transform = TestTransform(300, np.array([0,0,0]), 1.0)
         datasets = []
         dataset = VOCDataset('/data/dataset/VOCdevkit/voc_07_12_train/', transform=transform_train, target_transform=target_transform)
+
         datasets.append(dataset)
         valid_dataset = VOCDataset('/data/dataset/VOCdevkit/VOC2007TEST/', transform=test_transform, target_transform=target_transform, is_test=True)
+
         if 'train' in splits:
-            train_dataset = dataset
+            train_dataset = torchdata.ConcatDataset(datasets)
             if kwargs['dist'] is True:
                 sampler_train = torch.utils.data.DistributedSampler(train_dataset)
-                train_loader = torchdata.DataLoader(train_dataset, sampler=sampler_train, batch_size=batch_size, shuffle=False, num_workers=8, collate_fn=collate_voc_batch)
+                train_loader = torchdata.DataLoader(train_dataset, sampler=sampler_train, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=collate_voc_batch)
             else:
                 sampler_train = None
                 sampler_val = None
                 sampler_test = None
-                train_loader = torchdata.DataLoader(train_dataset, batch_size, num_workers=8, shuffle=True, collate_fn=collate_voc_batch)
+                train_loader = torchdata.DataLoader(train_dataset, batch_size, num_workers=4, shuffle=True, collate_fn=collate_voc_batch)
         if 'val' in splits:
             if kwargs['dist'] is True:
                 sampler_val = torch.utils.data.DistributedSampler(valid_dataset)
-                val_loader = torchdata.DataLoader(valid_dataset, sampler=sampler_val, batch_size=batch_size, shuffle=False, num_workers=16, collate_fn=collate_voc_batch)
+                val_loader = torchdata.DataLoader(valid_dataset, sampler=sampler_val, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=collate_voc_batch)
             else:
-                val_loader = torchdata.DataLoader(valid_dataset, batch_size=batch_size, shuffle=False, num_workers=8, collate_fn=collate_voc_batch)
+                val_loader = torchdata.DataLoader(valid_dataset, batch_size=batch_size, shuffle=False, num_workers=4, collate_fn=collate_voc_batch)
                 sampler_train = None
                 sampler_val = None
                 sampler_test = None
@@ -181,4 +187,4 @@ def getDataloaders(data, config_of_data, splits=['train', 'val', 'test'],
     else:
         raise NotImplemented
 
-    return train_dataset, valid_dataset, sampler_test, train_loader, val_loader, test_loader
+    return sampler_train, sampler_val, sampler_test, train_loader, val_loader, test_loader

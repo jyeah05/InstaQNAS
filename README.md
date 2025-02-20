@@ -12,6 +12,9 @@ To reduce computational redundancy inherent in fixed-bit-width quantization, inp
 
 ## How to train policy & main networks
 
+### 0. Environment Setting
+
+
 ### 1. Pretrain
 * Pretrain main network with randomly generated policies.
     * We used full-precision pretrain model of https://github.com/qfgaohao/pytorch-ssd
