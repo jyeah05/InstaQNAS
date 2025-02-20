@@ -558,6 +558,33 @@ def round_pass(x):
     y_grad = x
     return y.detach() - y_grad.detach() + y_grad
 
+class _ActQ(nn.Module):
+    def __init__(self, in_features, **kwargs_q):
+        super(_ActQ, self).__init__()
+        # self.kwargs_q = get_default_kwargs_q(kwargs_q, layer_type=self)
+        # self.nbits = kwargs_q['nbits']
+        # if self.nbits < 0:
+        #     self.register_parameter('alpha', None)
+        #     self.register_parameter('zero_point', None)
+        #     return
+        # self.signed = kwargs_q['signed']
+        # self.q_mode = kwargs_q['mode']
+        self.scale = nn.Parameter(torch.Tensor(1))
+        self.zero_point = nn.Parameter(torch.Tensor([0]))
+        # if self.q_mode == Qmodes.kernel_wise:
+        #     self.alpha = Parameter(torch.Tensor(in_features))
+        #     self.zero_point = Parameter(torch.Tensor(in_features))
+        #     torch.nn.init.zeros_(self.zero_point)
+        # self.zero_point = Parameter(torch.Tensor([0]))
+        self.register_buffer('init_state', torch.zeros(1))
+        self.register_buffer('signed', torch.zeros(1))
+
+    def add_param(self, param_k, param_v):
+        self.kwargs_q[param_k] = param_v
+
+    def set_bit(self, nbits):
+        self.kwargs_q['nbits'] = nbits
+
 class ActLSQ(_ActQ):
     def __init__(self, in_features, nbits_a=4, mode='layer_wise', **kwargs):
         super(ActLSQ, self).__init__(in_features=in_features, nbits=nbits_a, mode=mode)

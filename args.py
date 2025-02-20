@@ -95,6 +95,9 @@ arch_resume_names = ['arch', 'depth', 'death_mode', 'death_rate', 'death_rate',
 arch_group.add_argument('--ssd_model', default=None, type=str, help='Load extra/classication headers from')
 arch_group.add_argument('--instanet_chkpt', default=None, type=str, help='Load basenet INSTANAS from')
 arch_group.add_argument('--agent_chkpt', default=None, type=str, help='Load basenet agent from')
+arch_group.add_argument('--abit', type=int, default=2)
+arch_group.add_argument('--action_list', type=int, nargs='*', default=[2,3,4,5,6])
+arch_group.add_argument('--input_norm', type=str2bool, default=False)
 
 # training related
 optim_group = arg_parser.add_argument_group('optimization',

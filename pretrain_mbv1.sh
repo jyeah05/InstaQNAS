@@ -19,7 +19,6 @@ python pretrain_ssd.py --data VOC \
 --full_pretrain 'False' \
 --epochs 300 \
 --image_size 300 \
---vgg_batchnorm 'False' \
 --extras_wbit 4 \
 --extras_abit 4 \
 --head_wbit 8 \
