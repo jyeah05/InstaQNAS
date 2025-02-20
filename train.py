@@ -729,8 +729,8 @@ class Trainer(object):
         avg_bops  = avg_bops.mean()
         return avg_ap, avg_bops
     def ssd_validate_batch_prec_bops(self, images, anno_boxes, anno_labels, image_sizes, policy, predictor=None, eval_path='./test', config=None, conf_threshold=0.01):
-        eval_path = pathlib.Path(eval_path)
-        eval_path.mkdir(exist_ok=True) # Note this dataset is ""traindataset""
+        # eval_path = pathlib.Path(eval_path)
+        # eval_path.mkdir(exist_ok=True) # Note this dataset is ""traindataset""
         # switch to evaluate mode
         self.model.eval()
         IMG_SIZE = config['image_size']
@@ -825,8 +825,8 @@ class Trainer(object):
         return prec_batch, rec_batch, batch_bops #single, single, single
 
     def ssd_validate_batch_single_prec_bops(self, images, anno_boxes, anno_labels, image_sizes, policy, predictor=None, eval_path='./test', config=None, conf_threshold=0.01):
-        eval_path = pathlib.Path(eval_path)
-        eval_path.mkdir(exist_ok=True) # Note this dataset is ""traindataset""
+        # eval_path = pathlib.Path(eval_path)
+        # eval_path.mkdir(exist_ok=True) # Note this dataset is ""traindataset""
         # switch to evaluate mode
         self.model.eval()
         IMG_SIZE = config['image_size']

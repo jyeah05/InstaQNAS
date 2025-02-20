@@ -5,13 +5,10 @@ python search_multinomial.py  \
 --num_classes 21 \
 --finetune_only \
 --cv_dir '/data/jeesak/InstaQNAS/MBv1-SSD/fine-tune' \
---instassd_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
---agent_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
+--instassd_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/model_best.pth.tar' \
+--agent_chkpt '/data/jeesak/InstaQNAS/MBv1-SSD/search/model_best.pth.tar' \
 --retraining 'True' \
 --resume \
---sample_eval_path './prec_thre06/sample_eval_test' \
---search_eval_path './prec_thre06/search_eval_test' \
---eval_path './prec_thre06/eval_test' \
 --extras_wbit 4 \
 --extras_abit 4 \
 --head_wbit 8 \
@@ -24,4 +21,4 @@ python search_multinomial.py  \
 --image_size 300 \
 --abit 4 \
 --action_list 3 4 5 \
---lr 1e-5 --batch_size 64 --epochs 300 --gpu '0' 
+--lr 1e-5 --batch_size 32 --epochs 300 --gpu '0' 

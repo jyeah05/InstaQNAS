@@ -863,10 +863,10 @@ def train_val_test():
             train_loader, epoch, args.test_policy, 
             args.test_policy_all_bit, args.exclude_1bit
             )
-        val_loss, reg_loss, cls_loss  = trainer.ssd_valid(val_loader, epoch, 
-                                                          args.test_policy, 
-                                                          args.test_policy_all_bit,
-                                                          args.exclude_1bit)
+        # val_loss, reg_loss, cls_loss  = trainer.ssd_valid(val_loader, epoch, 
+        #                                                   args.test_policy, 
+        #                                                   args.test_policy_all_bit,
+        #                                                   args.exclude_1bit)
         if epoch % args.save_iter ==0:
             save_checkpoint({
                 'args': args,
@@ -876,16 +876,16 @@ def train_val_test():
                 'state_dict': model.state_dict(),
                 'best_map': best_map,
                 }, is_best=False, save_dir=args.save)
-        if epoch % args.test_epoch == 0 and epoch >0 :
+        if epoch % args.test_epoch == 0:# and epoch >0 :
             cur_map = trainer.ssd_test(test_loader, epoch, 
                                        test_dataset, predictor, 
                                        args.save, ssd_config.config, 
                                        args.conf_threshold, test_policy=args.test_policy, 
                                        test_policy_all_bit=args.test_policy_all_bit,
                                        exclude_1bit=args.exclude_1bit)
-            is_best = cur_map > best_map
+            is_best = cur_map[0] > best_map
             if is_best:
-                best_map = cur_map
+                best_map = cur_map[0]
                 best_epoch = epoch
                 mprint(Fore.GREEN + 'Best mAP {}'.format(best_map) + Fore.RESET)
                 save_checkpoint({

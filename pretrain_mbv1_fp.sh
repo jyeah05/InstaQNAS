@@ -1,6 +1,6 @@
 python pretrain_ssd.py --data VOC \
 --arch base \
---batch_size 24 \
+--batch_size 64 \
 --save '/data/jeesak/InstaQNAS/MBv1-SSD/pretrained/FP' \
 --resume \
 --resume_path '/data/jeesak/InstaQNAS_MBv1_SSD/mbv1_ssd_fp.pth' \
@@ -18,4 +18,6 @@ python pretrain_ssd.py --data VOC \
 --epochs 300 \
 --image_size 300 \
 --input_norm 'True' \
---test_first
+--test_first \
+--test_epoch 1 \
+--save_iter 1

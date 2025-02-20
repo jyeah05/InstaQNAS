@@ -36,6 +36,7 @@ from utils import AverageMeter, adjust_learning_rate, save_checkpoint, get_optim
 from args import arg_parser, arch_resume_names
 from models.multibox_loss import MultiboxLoss
 from models.mb1_ssd_config import generate_mb1_ssd_config
+from models.mb2_ssd_config import generate_mb2_ssd_config
 from data_provider.voc_dataset import VOCDataset
 from data_provider.data_preprocessing import TestTransform
 from utils import collate_voc_batch
@@ -115,7 +116,7 @@ def get_reward_thre_ori(precs_real,  elasped, baseline, ub, lb, is_batch=False, 
     return reward
 
 def get_reward_thre_2(precs_real,  elasped, baseline, ub, lb, is_batch=False, is_test=False):
-
+    # breakpoint()
     #print("bops")
     #print(elasped)
     if is_batch:
@@ -268,8 +269,8 @@ def getModel(arch, **kargs):
 
     if args.instassd_chkpt:
         instanet_checkpoint = torch.load(args.instassd_chkpt)
-        #new_state = remove_prefix(instanet_checkpoint['state_dict'], 'module.')
-        new_state = remove_prefix(instanet_checkpoint['instanet'], 'module.')
+        new_state = remove_prefix(instanet_checkpoint['state_dict'], 'module.')
+        # new_state = remove_prefix(instanet_checkpoint['instanet'], 'module.')
         new_state.update(new_state)
         try:
             model.load_state_dict(new_state)
@@ -285,7 +286,6 @@ def getModel(arch, **kargs):
     print_model_parm_nums(model)
     return model
 def get_agent(**kargs):
-    agent = Policy224_HW([1,1,1,1], num_blocks=13, num_of_actions=4)
     if args.arch_type == "V1+SSD":
         agent = Policy300([1,1,1,1], num_blocks=13, num_of_actions=len(args.action_list))
     elif args.arch_type == "V2+SSD_Lite":
@@ -294,10 +294,6 @@ def get_agent(**kargs):
         checkpoint = torch.load(args.agent_chkpt)
         agent.load_state_dict(checkpoint['agent'])
         print("Loaded agent!")
-    #if args.agent_chkpt:
-    #    gpu_id =  init_dist()
-    #    agent = torch.nn.parallel.DistributedDataParallel(agent.cuda(), [gpu_id], gpu_id, find_unused_parameters=True)
-    #else:
     agent = torch.nn.DataParallel(agent).cuda()
     return agent
 
@@ -312,7 +308,6 @@ def train(epoch, instanet, agent, optimizer, searchloader, trainer, predictor, _
         lr = adjust_learning_rate(optimizer, args.agent_lr, args.weight_decay, epoch, args.epochs, args.agent_lr_type, args.agent_milestones, args.agent_gamma, len(searchloader), idx)
         images, image_sizes, anno_boxes, anno_labels, anno_is_difficult = data
         images = images.cuda(non_blocking=True)
-        images = (images*255).round_()
         image_sizes = image_sizes.cpu()
         probs, _ = agent(images)
         policy_real = probs.data.clone()
@@ -321,26 +316,7 @@ def train(epoch, instanet, agent, optimizer, searchloader, trainer, predictor, _
         probs = probs*args.alpha + (1-probs)*(1-args.alpha) # state s bound
         distr = torch.distributions.Multinomial(1, probs)
         policy = distr.sample()
-
-        if args.test_two_layers is True:
-            policy[:,2:,0] = 1
-            policy[:,2:,1] = 0
-            policy[:,2:,2] = 0
-            policy[:,2:,3] = 0
-            policy_real[:,2:,0] = 1
-            policy_real[:,2:,1] = 0
-            policy_real[:,2:,2] = 0
-            policy_real[:,2:,3] = 0
-            policy_mask = torch.ones(images.size(0), policy_real.size(1), policy_real.size(2)).cuda()
-            policy_mask[:,2:,0] = 0
-            policy_mask[:,2:,1] = 0
-            policy_mask[:,2:,2] = 0
-            policy_mask[:,2:,3] = 0
-            #print("policy")
-            #print(policy)
-        else:
-            policy_mask = None
-
+        # breakpoint()
         with torch.no_grad():
             v_inputs = torch.tensor(images.data.clone()).cuda().detach()
             #if args.batch_reward:
@@ -348,9 +324,9 @@ def train(epoch, instanet, agent, optimizer, searchloader, trainer, predictor, _
 
              #   prec_sample, rec_sample, bops_sample = trainer.ssd_validate_batch_prec_bops(v_inputs, anno_boxes=anno_boxes, anno_labels=anno_labels,  image_sizes=image_sizes, policy=policy, predictor=predictor, eval_path=args.sample_eval_path, config=_config, conf_threshold=args.conf_threshold)
             #else:
-            prec_real, rec_real, bops_real = trainer.ssd_validate_batch_single_prec_bops(v_inputs, anno_boxes=anno_boxes, anno_labels=anno_labels, image_sizes=image_sizes, policy=policy_real, predictor=predictor, eval_path=args.search_eval_path, config=_config, conf_threshold=args.conf_threshold)
+            prec_real, rec_real, bops_real, _ = trainer.ssd_validate_batch_single_prec_bops(v_inputs, anno_boxes=anno_boxes, anno_labels=anno_labels, image_sizes=image_sizes, policy=policy_real, predictor=predictor, eval_path=args.search_eval_path, config=_config, conf_threshold=args.conf_threshold)
 
-            prec_sample, rec_sample, bops_sample = trainer.ssd_validate_batch_single_prec_bops(v_inputs, anno_boxes=anno_boxes, anno_labels=anno_labels,  image_sizes=image_sizes, policy=policy, predictor=predictor, eval_path=args.sample_eval_path, config=_config, conf_threshold=args.conf_threshold)
+            prec_sample, rec_sample, bops_sample, _ = trainer.ssd_validate_batch_single_prec_bops(v_inputs, anno_boxes=anno_boxes, anno_labels=anno_labels,  image_sizes=image_sizes, policy=policy, predictor=predictor, eval_path=args.sample_eval_path, config=_config, conf_threshold=args.conf_threshold)
         if args.reward_type == 'prec+bops':
             reward_real = get_reward_REINFORCE(prec_real, bops_real, is_batch=args.batch_reward)
             reward_sample  = get_reward_REINFORCE(prec_sample, bops_sample, is_batch=args.batch_reward)
@@ -369,18 +345,16 @@ def train(epoch, instanet, agent, optimizer, searchloader, trainer, predictor, _
         else:
             reward_real  = get_reward_MAP(prec_real)
             reward_sample  = get_reward_MAP(prec_sample)
-
+        
         advantage = reward_sample - reward_real
         advantage = advantage.cuda(non_blocking=True).expand_as(policy)
         loss = -distr.log_prob(policy)
-        loss = loss.unsqueeze(2).repeat(1,1,4)
+        loss = loss.unsqueeze(2).repeat(1,1,len(args.action_list))
         #print(loss)
         loss = loss * advantage
 
         #print("loss")
         #print(loss)
-        if policy_mask is not None:
-            loss = policy_mask * loss
 
         #print(loss)
         #input("enter")
@@ -431,7 +405,7 @@ def train_net(epoch, instanet, agent, trainer,  optimizer_net, trainloader_ft, s
     agent.eval()
     instanet.train() # Note: instanet now refers to SSD
     # set GT boxes
-    losses, regression_losses, classification_losses, lr = trainer.ssd_train(trainloader_ft, epoch, args.alpha, args.test_two_layers)
+    losses, regression_losses, classification_losses, lr = trainer.ssd_train(trainloader_ft, epoch, args.alpha)
     print('FT E: {:3d} | Train loss {loss:.4f} | '
               'Ref_loss@1 {reg_los:.4f} | '
               ' Class_loss@5{cls_los:.4f} | '
@@ -450,7 +424,7 @@ def train_net(epoch, instanet, agent, trainer,  optimizer_net, trainloader_ft, s
 def test(epoch, instanet, agent, test_dataset, testloader, trainer, predictor, ssd_config, lb, ub, scores, best_map=0):
     agent.eval()
     instanet.eval() # SSD 
-    map_real,  bops_real, policies_set =trainer.ssd_test(testloader, epoch, test_dataset, predictor, args.eval_path, config=ssd_config, conf_threshold=args.conf_threshold, test_policy=False, return_policy=True, test_two_layers=args.test_two_layers)
+    map_real,  bops_real, policies_set =trainer.ssd_test(testloader, epoch, test_dataset, predictor, args.cv_dir, config=ssd_config, conf_threshold=args.conf_threshold, test_policy=False, return_policy=True)
     if args.reward_type == 'prec+bops':
         reward_real = get_reward_REINFORCE(np.array(map_real), bops_real, is_batch=True,  is_test=True)
         reward_real = reward_real.cpu().numpy()
@@ -458,7 +432,7 @@ def test(epoch, instanet, agent, test_dataset, testloader, trainer, predictor, s
         reward_real = 0.01 * map_real
     elif args.reward_type == 'prec+bops_thre':
         reward_real = get_reward_thre(np.array(map_real), bops_real, args.baseline, ub, lb, is_batch=True, is_test=True)
-    elif args.reward_type == 'prec+bops_thre_2':
+    elif args.reward_type == 'prec+bops_thre2':
         reward_real = get_reward_thre_2(np.array(map_real), bops_real, args.baseline, ub, lb, is_batch=True, is_test=True)
     elif args.reward_type == 'prec+bops_thre_ori':
         reward_real = get_reward_thre_ori(np.array(map_real), bops_real, args.baseline, ub, lb, is_batch=True, is_test=True)
@@ -501,7 +475,12 @@ def test(epoch, instanet, agent, test_dataset, testloader, trainer, predictor, s
 #--------------------------------------------------------------------------------------------------------#
 def train_val_test():
     dt = {'num_classes':args.num_classes, 'augmentation':args.augmentation}
-    ssd_config = generate_mb1_ssd_config(args.image_size, args.iou_threshold, args.center_variance, args.size_variance) #prior, specs, thresholds
+    if 'V1' in args.arch_type or 'CAPP' in args.arch_type:
+        ssd_config = generate_mb1_ssd_config(args.image_size, args.iou_threshold, args.center_variance, args.size_variance) #prior, specs, thresholds
+    elif 'V2' in args.arch_type:
+        ssd_config = generate_mb2_ssd_config(args.image_size, args.iou_threshold, args.center_variance, args.size_variance) #prior, specs, thresholds
+    else:
+        raise NotImplementedError("Not existing arch_type")
     dt['ssd_config'] = ssd_config
     args.config_of_data = dt
     os.makedirs(args.cv_dir, exist_ok=True)
@@ -535,7 +514,12 @@ def train_val_test():
     if args.freeze_basenet is True:
         instanet.module.freeze_base_param()
     agent = get_agent(**vars(args))
-    predictor = create_mobilenetv1_ssd_predictor(instanet, ssd_config.config)
+    if 'V1' in args.arch_type or 'CAPP' in args.arch_type:
+        predictor = create_mobilenetv1_ssd_predictor(instanet, ssd_config.config)
+    elif 'V2' in args.arch_type:
+        predictor = create_mobilenetv2_ssd_predictor(instanet, ssd_config.config)
+    else:
+        raise NotImplementedError("Not existing arch_type")
     criterion = MultiboxLoss(ssd_config.config['priors'], iou_threshold=args.iou_threshold, neg_pos_ratio=3, center_variance=args.center_variance, size_variance=args.size_variance, conf_threshold=0.1)
     optimizer_net = get_optimizer(instanet, args)
     optimizer = optim.Adam(agent.parameters(), lr=args.agent_lr, weight_decay= args.weight_decay)
@@ -560,7 +544,7 @@ def train_val_test():
         train_dataset, __, _, train_loader, __ , _ = getDataloaders(splits=('train'), **vars(args))
     search_transform = TestTransform(300, np.array([0,0,0]), 1.0)
     search_dataset = VOCDataset('/data/dataset/VOCdevkit/voc_07_12_train/', transform=search_transform)
-    search_loader =  torchdata.DataLoader(search_dataset, batch_size=24, shuffle=True, num_workers=4, collate_fn=collate_voc_batch)
+    search_loader =  torchdata.DataLoader(search_dataset, batch_size=args.batch_size*4, shuffle=True, num_workers=4, collate_fn=collate_voc_batch)
 
     #if args.resume:
     #    checkpoint = torch.load(args.resume_path)
@@ -573,7 +557,7 @@ def train_val_test():
     best_epoch = 0
     test_transform = TestTransform(300, np.array([0,0,0]), 1.0)
     test_dataset = VOCDataset('/data/dataset/VOCdevkit/VOC2007TEST/', transform=test_transform, is_test=True)
-    test_loader =  torchdata.DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=8, collate_fn=collate_voc_batch)
+    test_loader =  torchdata.DataLoader(test_dataset, batch_size=int(args.batch_size*1.5), shuffle=False, num_workers=8, collate_fn=collate_voc_batch)
     trainer.set_true_labels(test_dataset)
     baseline_max = args.baseline_max
     baseline = args.baseline
@@ -640,8 +624,6 @@ def fine_tune_val_test():
         ssd_config = generate_mb1_ssd_config(args.image_size, args.iou_threshold, args.center_variance, args.size_variance) #prior, specs, thresholds
     elif 'V2' in args.arch_type:
         ssd_config = generate_mb2_ssd_config(args.image_size, args.iou_threshold, args.center_variance, args.size_variance) #prior, specs, thresholds
-    elif 'VGG' in args.arch_type:
-        ssd_config = generate_vgg_ssd_config(args.image_size, args.iou_threshold, args.center_variance, args.size_variance) #prior, specs, thresholds
     else:
         raise NotImplementedError("Not existing arch_type")
     dt['ssd_config'] = ssd_config
@@ -718,7 +700,7 @@ def fine_tune_val_test():
     trainer.set_true_labels(test_dataset)
     if args.test_first:
         map_real,  bops_real, policies_set =trainer.ssd_test(test_loader, 0, test_dataset, predictor, 
-                                                             args.eval_path, config=ssd_config.config, 
+                                                             args.cv_dir, config=ssd_config.config, 
                                                              conf_threshold=args.conf_threshold, 
                                                              test_policy=args.test_policy, return_policy=True, atype=args.arch_type
                                                             )
@@ -744,7 +726,7 @@ def fine_tune_val_test():
             print(" [*] Fine-tuning ... ")
             fine_tune_net(epoch, instanet, agent, trainer, optimizer_net, train_loader, scores)
             map_real,  bops_real, policies_set =trainer.ssd_test(test_loader, epoch, test_dataset, predictor, 
-                                                             args.eval_path, config=ssd_config.config, 
+                                                             args.cv_dir, config=ssd_config.config, 
                                                              conf_threshold=args.conf_threshold, 
                                                              test_policy=args.test_policy, return_policy=True,
                                                             )

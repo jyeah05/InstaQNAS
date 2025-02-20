@@ -1,6 +1,6 @@
 python pretrain_ssd.py --data VOC \
 --arch base \
---batch_size 128 \
+--batch_size 32 \
 --save '/data/jeesak/InstaQNAS/MBv1-SSD/pretrained' \
 --resume \
 --resume_path '/data/jeesak/InstaQNAS/MBv1-SSD/pretrained/FP/model_best.pth.tar' \
@@ -26,4 +26,5 @@ python pretrain_ssd.py --data VOC \
 --input_norm 'True' \
 --action_list 3 4 5 \
 --test_epoch 5 \
---abit 4
+--abit 4 \
+--save_iter 1
