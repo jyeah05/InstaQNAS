@@ -11,7 +11,9 @@
 
 ### 1. Pretrain
 * Pretrain main network with randomly generated policies.
+    * We used full-precision pretrain model of https://github.com/qfgaohao/pytorch-ssd
 ```shell
+sh pretrain_mbv1_fp.sh   
 sh pretrain_mbv1.sh
 ``` 
 ### 2. Search

@@ -173,7 +173,7 @@ def train_val_test():
                 args.start_epoch = checkpoint['epoch'] + 1
             
             model = getModel(**vars(args))
-            
+            breakpoint()
             # model(dummy_input, dummy_policy)
             if args.arch_type == 'V1+SSD':
                 # breakpoint()

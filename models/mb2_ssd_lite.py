@@ -5,7 +5,7 @@ from .predictor import Predictor
 from torch.nn import Sequential, ModuleList
 
 
-def create_mobilenetv2_ssd_lite_aug(_base_net, num_classes, wbit=8, abit=8, head_wbit=8, head_abit=8, config=None, full_pretrain=False):
+def create_mobilenetv2_ssd_lite_aug(_base_net, num_classes, wbit=8, abit=8, head_wbit=8, head_abit=8, config=None, full_pretrain=False, ActQ='PACT'):
     base_net = _base_net  # disable dropout layer
 
     source_layer_indexes = [
@@ -14,34 +14,34 @@ def create_mobilenetv2_ssd_lite_aug(_base_net, num_classes, wbit=8, abit=8, head
     ]
     extras = ModuleList([
         Sequential(
-            QuantInvertedResBlock(1280, 512, kernel=3, stride=2, expansion=0.2, wbit=wbit, abit=abit, full_pretrain=full_pretrain),
+            QuantInvertedResBlock(1280, 512, kernel=3, stride=2, expansion=0.2, wbit=wbit, abit=abit, full_pretrain=full_pretrain, ActQ=ActQ),
         ),
         Sequential(
-            QuantInvertedResBlock(512, 256, kernel=3, stride=2, expansion=0.25, wbit=wbit, abit=abit, full_pretrain=full_pretrain),
+            QuantInvertedResBlock(512, 256, kernel=3, stride=2, expansion=0.25, wbit=wbit, abit=abit, full_pretrain=full_pretrain, ActQ=ActQ),
         ),
         Sequential(
-            QuantInvertedResBlock(256, 256, kernel=3, stride=2, expansion=0.5, wbit=wbit, abit=abit, full_pretrain=full_pretrain),
+            QuantInvertedResBlock(256, 256, kernel=3, stride=2, expansion=0.5, wbit=wbit, abit=abit, full_pretrain=full_pretrain, ActQ=ActQ),
         ),
         Sequential(
-            QuantInvertedResBlock(256, 64, kernel=3, stride=2, expansion=0.25, wbit=wbit, abit=abit, full_pretrain=full_pretrain),
+            QuantInvertedResBlock(256, 64, kernel=3, stride=2, expansion=0.25, wbit=wbit, abit=abit, full_pretrain=full_pretrain, ActQ=ActQ),
         )
     ])
     regression_headers = ModuleList([
-        QuantInvertedResBlock(576, 24, kernel=3, stride=1, expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        QuantInvertedResBlock(1280, 24, kernel=3, stride=1, expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        QuantInvertedResBlock(512, 24, kernel=3, stride=1,  expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        QuantInvertedResBlock(256, 24, kernel=3, stride=1,  expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        QuantInvertedResBlock(256, 24, kernel=3, stride=1,  expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        Qconv_MERE(64, 24, kernel=1, stride=1, padding=0, wbit=head_wbit, abit=head_abit, weight_only=False, same_padding=False, full_pretrain=full_pretrain),
+        Qconv_Seperable(576, 24, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_Seperable(1280, 24, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_Seperable(512, 24, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_Seperable(256, 24, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_Seperable(256, 24, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_MERE(64, 24, kernel=1, stride=1, padding=0, wbit=head_wbit, abit=head_abit, weight_only=False, same_padding=False, full_pretrain=full_pretrain, ActQ=ActQ),
     ])
 
     classification_headers = ModuleList([
-        QuantInvertedResBlock(576, 6*num_classes, kernel=3, stride=1, expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        QuantInvertedResBlock(1280, 6*num_classes, kernel=3, stride=1, expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        QuantInvertedResBlock(512, 6*num_classes, kernel=3, stride=1,  expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        QuantInvertedResBlock(256, 6*num_classes, kernel=3, stride=1,  expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        QuantInvertedResBlock(256, 6*num_classes, kernel=3, stride=1,  expansion=1, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain),
-        Qconv_MERE(64,  6*num_classes, kernel=1, stride=1, padding=0, wbit=head_wbit, abit=head_abit, weight_only=False, same_padding=False, full_pretrain=full_pretrain),
+        Qconv_Seperable(576, 6*num_classes, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_Seperable(1280, 6*num_classes, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_Seperable(512, 6*num_classes, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_Seperable(256, 6*num_classes, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_Seperable(256, 6*num_classes, kernel=3, stride=1, padding=1, same_padding=False, wbit=head_wbit, abit=head_abit, full_pretrain=full_pretrain, ActQ=ActQ, bias=True),
+        Qconv_MERE(64,  6*num_classes, kernel=1, stride=1, padding=0, wbit=head_wbit, abit=head_abit, weight_only=False, same_padding=False, full_pretrain=full_pretrain, ActQ=ActQ),
     ])
 
 

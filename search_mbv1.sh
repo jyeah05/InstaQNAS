@@ -3,8 +3,8 @@ python search_multinomial.py  \
 --arch_type 'V1+SSD' \
 --ActQ 'LSQ+' \
 --num_classes 21 \
---cv_dir '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/search' \
---instassd_chkpt '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/pretrained/model_best.pth.tar' \
+--cv_dir '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/search' \
+--instassd_chkpt '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/pretrained/model_best.pth.tar' \
 --retraining 'True' \
 --sample_eval_path './prec_thre06/sample_eval_test' \
 --search_eval_path './prec_thre06/search_eval_test' \

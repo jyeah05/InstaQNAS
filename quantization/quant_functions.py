@@ -7,6 +7,7 @@ import torch.nn.functional as F
 #from utils.config import FLAGS
 import math
 from torch.nn.modules.utils import _pair
+import os
 
 class ScaleSigner(Function):
     """take a real value x, output sign(x)*E(|x|)"""
@@ -345,6 +346,147 @@ class Linear_PactQ(nn.Linear):
         output = F.linear(x, w, self.bias)
         return output
 
+def HW_scale_clip(scale_w, scale_in, scale_out):
+
+    scale_inout = scale_out.item()/scale_in.item()
+    hw_weight_scale_min = (128/255)*scale_inout
+    hw_weight_scale_max = (2**15)/(511/512)*scale_inout
+    '''scale check'''
+    min_mask = torch.lt(scale_w, hw_weight_scale_min)
+    max_mask = torch.gt(scale_w, hw_weight_scale_max)
+    scale_new_w = min_mask*hw_weight_scale_min + (~min_mask)*scale_w
+    scale_new_w = max_mask*hw_weight_scale_max + (~max_mask*scale_new_w)
+    
+    return scale_new_w
+
+def quant_simul(input, bit, scheme, 
+                tracked_min_biased=None, # self.tracked_min_in(out)_biased
+                tracked_max_biased=None, # self.tracked_max_in(out)_biased
+                iter_count=None, # self.iter_count
+                ema_decay=None): # self.ema_decay
+    assert 'linear' in scheme
+    if scheme == 'linear_track':
+        dims = [1] * input.dim()
+                
+        current_max = torch.max(input)
+        current_min = torch.min(input)
+        tracked_min_biased, tracked_min = update_ema(
+                                            tracked_min_biased,
+                                            current_min,
+                                            ema_decay,
+                                            iter_count)
+        tracked_max_biased, tracked_max = update_ema(
+                                            tracked_max_biased,
+                                            current_max,
+                                            ema_decay,
+                                            iter_count)
+        
+        sat_val = torch.max(torch.abs(tracked_min), torch.abs(tracked_max))
+        actual_min, actual_max = -sat_val, sat_val
+        sat_val = sat_val.view(dims)
+        
+        n = (2 ** bit - 1) / 2
+        sat_val[sat_val <= 3.75e-37] = n
+        
+        a = n / sat_val # a = scale of input
+        return a, tracked_min_biased, tracked_min, tracked_max_biased, tracked_max
+    elif scheme == 'linear_non_track':
+        # raise NotImplementedError
+        dims = [1] * input.dim()
+        
+        sat_val = torch.max(torch.abs(tracked_min_biased), torch.abs(tracked_max_biased))
+        
+        actual_min, actual_max = -sat_val, sat_val
+        sat_val = sat_val.view(dims)
+        
+        # clamp input
+        input_val = torch.clamp(input, actual_min.item(), actual_max.item())
+        
+        # quantize
+        n = (2 ** bit - 1) / 2
+        sat_val[sat_val <= 3.75e-37] = n
+        
+        a = n / sat_val # a = scale of input
+        res = torch.round(a * input_val)
+        
+        # dequantize
+        res = res / a
+        return res, a
+def update_ema(biased_ema, value, decay, step):
+    biased_ema = biased_ema * decay + (1 - decay) * value
+    unbiased_ema = biased_ema / (1 - decay ** step)  # Bias correction
+    return biased_ema, unbiased_ema
+
+class linear_q_k(Function):
+    '''
+        only quant & dequant here
+    '''
+    @staticmethod
+    def forward(ctx, input, bit, scheme, 
+                tracked_min_biased=None, # self.tracked_min_in(out)_biased
+                tracked_max_biased=None, # self.tracked_max_in(out)_biased
+                iter_count=None, # self.iter_count
+                ema_decay=None): # self.ema_decay
+        assert 'linear' in scheme
+        if scheme == 'linear_non_track':
+            # per-channel quantization for conv layer
+            dims = [input.shape[0]] + [1] * (input.dim() - 1)
+            sat_val = torch.amax(torch.abs(input), dim=(1, 2, 3)).view(dims)
+            if bit==1:
+                n = 1
+                sat_val[sat_val <= 3.75e-37] = n
+                a = n / sat_val
+                res = torch.ceil(a*input)
+            else:
+                n = (2 ** bit - 1) / 2
+                sat_val[sat_val <= 3.75e-37] = n
+                
+                a = n / sat_val # a = scale of input
+                res = torch.round(a * input)
+            
+            # dequantize
+            res = res / a
+            return res, a
+        
+        elif scheme == 'linear_track':
+            dims = [1] * input.dim()
+            
+            current_max = torch.max(input)
+            current_min = torch.min(input)
+            tracked_min_biased, tracked_min = update_ema(
+                                                tracked_min_biased,
+                                                current_min,
+                                                ema_decay,
+                                                iter_count)
+            tracked_max_biased, tracked_max = update_ema(
+                                                tracked_max_biased,
+                                                current_max,
+                                                ema_decay,
+                                                iter_count)
+            
+            sat_val = torch.max(torch.abs(tracked_min), torch.abs(tracked_max))
+            actual_min, actual_max = -sat_val, sat_val
+            sat_val = sat_val.view(dims)
+            
+            # clamp input
+            input_val = torch.clamp(input, actual_min.item(), actual_max.item())
+            
+            # quantize
+            n = (2 ** bit - 1) / 2
+            sat_val[sat_val <= 3.75e-37] = n
+            
+            a = n / sat_val # a = scale of input
+            res = torch.round(a * input_val)
+            
+            # dequantize
+            res = res / a
+            return res, a, tracked_min_biased, tracked_min, tracked_max_biased, tracked_max
+
+    @staticmethod
+    def backward(ctx, grad_output, *dummy_scale_out): # fixed
+        # import pdb; pdb.set_trace()
+        return grad_output, None, None, None, None, None, None
+
 
 class aq_k(Function):
     """
@@ -355,7 +497,6 @@ class aq_k(Function):
     @staticmethod
     def forward(ctx, input, bit, scheme='original'):
         assert bit > 0
-        # assert torch.all(input >= 0) and torch.all(input <= 1)
         if scheme == 'original': # original dorefa
             a = (1 << bit) - 1
             res = torch.round(a * input)
@@ -366,7 +507,6 @@ class aq_k(Function):
             res.clamp_(max=a - 1).div_(a)
         else:
             raise NotImplementedError
-        # assert torch.all(res >= 0) and torch.all(res <= 1)
         return res
     
     @staticmethod
@@ -383,7 +523,7 @@ class q_k(Function):
     def forward(ctx, input, bit, scheme='original'):
         assert bit > 0
         assert torch.all(input >= 0) and torch.all(input <= 1)
-        if scheme == 'original':
+        if scheme == 'original': # original dorefa
             a = (1 << bit) - 1
             res = torch.round(a * input)
             res.div_(a)
@@ -395,26 +535,321 @@ class q_k(Function):
             raise NotImplementedError
         assert torch.all(res >= 0) and torch.all(res <= 1)
         return res
-
+    
     @staticmethod
     def backward(ctx, grad_output):
         return grad_output, None, None
 
+class Round(Function):
+    @staticmethod
+    def forward(self, input):
+        sign = torch.sign(input)
+        output = sign * torch.floor(torch.abs(input) + 0.5)
+        return output
 
-def round_width(width, wm=None,
-                #width_divisor=getattr(FLAGS, 'width_divisor', 1),
-                width_divisor=1,
-                #min_width=getattr(FLAGS, 'min_width', 1)):
-                min_width=1):
-    if not wm:
-        return width
-    width *= wm
-    if min_width is None:
-        min_width = width_divisor
-    new_width = max(min_width, int(width + width_divisor / 2) // width_divisor * width_divisor)
-    if new_width < 0.9 * width:
-        new_width += width_divisor
-    return int(new_width)
+    @staticmethod
+    def backward(self, grad_output):
+        breakpoint()
+        return grad_output
+
+
+
+class DRFQConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size, stride=1, padding=0, dilation=1,
+                 groups=1, bias=True,
+                 same_padding=False,
+                 bitw_min=None, bita_min=None,
+                 pact_fp=False,
+                 double_side=False,
+                 weight_only=False, full_pretrain=False,
+                 input_quant=True, layer_name = None):
+        super(DRFQConv2d, self).__init__(
+            in_channels, out_channels,
+            kernel_size, stride=stride,
+            padding=padding if not same_padding else 0,
+            dilation=dilation,
+            groups=groups, bias=bias)
+        self.same_padding = same_padding
+        self.bitw_min = bitw_min
+        self.bita_min = bita_min
+        self.pact_fp = pact_fp
+        self.double_side = double_side
+        self.weight_only = weight_only
+        self.input_quant = input_quant
+        self.wquant = q_k.apply
+        self.aquant = aq_k.apply
+        self.full_pretrain = full_pretrain
+        self.alpha = nn.Parameter(torch.tensor(10.0))
+        self.layer_name = layer_name
+
+    def forward(self, input):
+        if self.same_padding:
+            ih, iw = input.size()[-2:]
+            kh, kw = self.weight.size()[-2:]
+            sh, sw = self.stride
+            oh, ow = math.ceil(ih / sh), math.ceil(iw / sw)
+            pad_h = max((oh - 1) * self.stride[0] + (kh - 1) * self.dilation[0] + 1 - ih, 0)
+            pad_w = max((ow - 1) * self.stride[1] + (kw - 1) * self.dilation[1] + 1 - iw, 0)
+            if pad_h > 0 or pad_w > 0:
+                input = nn.functional.pad(input, [pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2])
+        bitw = self.bitw_min
+        bita = self.bita_min
+        if self.full_pretrain is True:
+            bitw = 32
+            bita = 32
+        weight_quant_scheme = 'original'
+        act_quant_scheme = 'original'
+
+        if bitw == 0:
+            return nn.Identity()(input)
+
+        if bitw < 32:
+            weight = torch.tanh(self.weight) / torch.max(torch.abs(torch.tanh(self.weight)))
+            weight.add_(1.0)
+            weight.div_(2.0)
+            weight = self.wquant(weight, bitw, weight_quant_scheme)
+            weight.mul_(2.0)
+            weight.sub_(1.0)
+        else:
+            weight = self.weight * 1.0
+        print(self.layer_name, weight.max().item())
+        
+        if (bita < 32 and not self.weight_only and self.input_quant):
+            input_val = self.aquant(input, bita, act_quant_scheme)
+        else:
+            input_val = input
+        print(self.layer_name, input_val.max().item())
+        y = nn.functional.conv2d(
+            input_val, weight, bias=self.bias, stride=self.stride, padding=self.padding,
+            dilation=self.dilation, groups=self.groups)
+        return y
+
+class _ActQ(nn.Module):
+    def __init__(self, in_features, **kwargs_q):
+        super(_ActQ, self).__init__()
+        self.scale = nn.Parameter(torch.Tensor(1))
+        self.zero_point = nn.Parameter(torch.Tensor([0]))
+
+        self.register_buffer('init_state', torch.zeros(1))
+        self.register_buffer('signed', torch.zeros(1))
+
+    def add_param(self, param_k, param_v):
+        self.kwargs_q[param_k] = param_v
+
+    def set_bit(self, nbits):
+        self.kwargs_q['nbits'] = nbits
+
+class ActLSQ(_ActQ):
+    def __init__(self, in_features, nbits_a=4, mode='layer_wise', **kwargs):
+        super(ActLSQ, self).__init__(in_features=in_features, nbits=nbits_a, mode=mode)
+        self.nbits = nbits_a
+    def forward(self, x):
+        if self.scale is None:
+            return x
+
+        if self.training and self.init_state == 0:
+            if x.min() < -1e-5:
+                self.signed.data.fill_(1)
+            if self.signed == 1:
+                Qn = -2 ** (self.nbits - 1)
+                Qp = 2 ** (self.nbits - 1) - 1
+            else:
+                Qn = 0
+                Qp = 2 ** self.nbits - 1
+            self.scale.data.copy_(2 * x.abs().mean() / math.sqrt(Qp))
+            self.zero_point.data.copy_(self.zero_point.data * 0.9 + 0.1 * (torch.min(x.detach()) - self.scale.data * Qn))
+            self.init_state.fill_(1)
+    
+
+        if self.signed == 1:
+            Qn = -2 ** (self.nbits - 1)
+            Qp = 2 ** (self.nbits - 1) - 1
+        else:
+            Qn = 0
+            Qp = 2 ** self.nbits - 1
+
+        g = 1.0 / math.sqrt(x.numel() * Qp)
+
+        zero_point = (self.zero_point.round() - self.zero_point).detach() + self.zero_point
+        scale = grad_scale(self.scale, g)
+        zero_point = grad_scale(zero_point, g)
+        if len(x.shape)==2:
+            scale = scale.unsqueeze(0)
+            zero_point = zero_point.unsqueeze(0)
+        elif len(x.shape)==3:
+            if x.shape[0] == scale.shape[0]:
+                scale = scale.unsqueeze(1).unsqueeze(2)
+                zero_point = zero_point.unsqueeze(1).unsqueeze(2)
+            elif x.shape[1] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(2)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(2)
+            elif x.shape[2] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(0)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(0)
+        elif len(x.shape)==4:
+            if x.shape[0] == scale.shape[0]:
+                scale = scale.unsqueeze(1).unsqueeze(2).unsqueeze(3)
+                zero_point = zero_point.unsqueeze(1).unsqueeze(2).unsqueeze(3)
+            elif x.shape[1] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+            elif x.shape[2] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(0).unsqueeze(3)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(0).unsqueeze(3)
+            elif x.shape[3] == scale.shape[0]:
+                scale = scale.unsqueeze(0).unsqueeze(0).unsqueeze(0)
+                zero_point = zero_point.unsqueeze(0).unsqueeze(0).unsqueeze(0)
+
+        x = round_pass((x / scale + zero_point).clamp(Qn, Qp))
+        x = (x - zero_point) * scale
+
+        return x
+
+def grad_scale(x, scale):
+    y = x
+    y_grad = x * scale
+    return y.detach() - y_grad.detach() + y_grad
+
+def round_pass(x):
+    y = x.round()
+    y_grad = x
+    return y.detach() - y_grad.detach() + y_grad
+
+class LSQConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size, stride=1, padding=0, dilation=1,
+                 groups=1, bias=True,
+                 same_padding=False,
+                 bitw_min=None, bita_min=None,
+                 double_side=False,
+                 weight_only=False, full_pretrain=False,
+                 input_quant=True, layer_name = None, unsigned=True, batch_init=20):
+        super(LSQConv2d, self).__init__(
+            in_channels, out_channels,
+            kernel_size, stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups, bias=bias)
+        self.same_padding = same_padding
+        self.bitw_min = bitw_min
+        self.bita_min = bita_min
+        self.double_side = double_side
+        self.weight_only = weight_only
+        self.input_quant = input_quant
+        self.full_pretrain = full_pretrain
+        self.layer_name = layer_name
+        self.unsigned = unsigned
+        self.batch_init = batch_init
+        
+        self.scale = nn.Parameter(torch.Tensor(1))
+        self.register_buffer('init_state', torch.zeros(1))
+        
+        self.act = ActLSQ(in_features=in_channels, nbits_a=bita_min)
+        
+    def forward(self, input):
+        bitw = self.bitw_min
+        bita = self.bita_min
+        if self.full_pretrain:
+            bitw = 32
+            bita = 32
+        # breakpoint()
+        if bitw == 0:
+            return nn.Identity()(input)
+        weight_quant_scheme = 'original'
+        act_quant_scheme = 'original'
+        
+        if bitw < 32:
+            Qn = -2 ** (bitw - 1)
+            Qp = 2 ** (bitw - 1) - 1
+            if self.training and self.init_state == 0:
+                if Qp >0:
+                    self.scale.data.copy_(2 * self.weight.abs().mean() / math.sqrt(Qp))
+                else:
+                    self.scale.data.copy_(2 * self.weight.abs().mean() / math.sqrt(Qp+1))
+                self.init_state.fill_(1)
+            
+            g = 1.0 / math.sqrt(self.weight.numel() * Qp) if Qp>0 else 1.0 / math.sqrt(self.weight.numel())
+            
+            scale = grad_scale(self.scale, g)
+            scale = scale.unsqueeze(1).unsqueeze(2).unsqueeze(3)
+            weight = round_pass((self.weight / scale).clamp(Qn, Qp)) * scale
+        else:
+            weight = self.weight * 1.0
+        
+        if (bita < 32 and self.input_quant):
+            input_val = self.act(input)
+        else:
+            input_val = input
+        y = nn.functional.conv2d(
+            input_val, weight, bias=self.bias, stride=self.stride, padding=self.padding,
+            dilation=self.dilation, groups=self.groups)
+        return y
+
+class DRFLSQConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size, stride=1, padding=0, dilation=1,
+                 groups=1, bias=True,
+                 same_padding=False,
+                 bitw_min=None, bita_min=None,
+                 pact_fp=False,
+                 double_side=False,
+                 weight_only=False, full_pretrain=False,
+                 input_quant=True, layer_name = None):
+        super(DRFLSQConv2d, self).__init__(
+            in_channels, out_channels,
+            kernel_size, stride=stride,
+            padding=padding if not same_padding else 0,
+            dilation=dilation,
+            groups=groups, bias=bias)
+        self.same_padding = same_padding
+        self.bitw_min = bitw_min
+        self.bita_min = bita_min
+        self.pact_fp = pact_fp
+        self.double_side = double_side
+        self.weight_only = weight_only
+        self.input_quant = input_quant
+        self.quant = q_k.apply
+        self.full_pretrain = full_pretrain
+        self.alpha = nn.Parameter(torch.tensor(10.0))
+        self.layer_name = layer_name
+        
+        self.scale = nn.Parameter(torch.Tensor(1))
+        self.register_buffer('init_state', torch.zeros(1))
+        
+        self.act = ActLSQ(in_features=in_channels, nbits_a=bita_min)
+
+    def forward(self, input):
+        bitw = self.bitw_min
+        bita = self.bita_min
+        if self.full_pretrain is True:
+            bitw = 32
+            bita = 32
+        weight_quant_scheme = 'original'
+        act_quant_scheme = 'original'
+
+        if bitw == 0:
+            return nn.Identity()(input)
+
+        if bitw < 32:
+            weight = torch.tanh(self.weight) / torch.max(torch.abs(torch.tanh(self.weight)))
+            weight.add_(1.0)
+            weight.div_(2.0)
+            weight = self.quant(weight, bitw, weight_quant_scheme)
+            weight.mul_(2.0)
+            weight.sub_(1.0)
+        else:
+            weight = self.weight * 1.0
+        if (bita < 32 and self.input_quant):
+            input_val = self.act(input)
+        else:
+            input_val = input
+
+        y = nn.functional.conv2d(
+            input_val, weight, bias=self.bias, stride=self.stride, padding=self.padding,
+            dilation=self.dilation, groups=self.groups)
+        return y
+
 
 class QConv2d(nn.Conv2d):
     def __init__(self, in_channels, out_channels,
@@ -424,7 +859,8 @@ class QConv2d(nn.Conv2d):
                  bitw_min=None, bita_min=None,
                  pact_fp=False,
                  double_side=False,
-                 weight_only=False, full_pretrain=False):
+                 weight_only=False, full_pretrain=False,
+                 input_quant=True, layer_name = None, pact_alpha_init=None):
         super(QConv2d, self).__init__(
             in_channels, out_channels,
             kernel_size, stride=stride,
@@ -437,12 +873,13 @@ class QConv2d(nn.Conv2d):
         self.pact_fp = pact_fp
         self.double_side = double_side
         self.weight_only = weight_only
+        self.input_quant = input_quant
         self.quant = q_k.apply
         self.full_pretrain = full_pretrain
-        self.alpha = nn.Parameter(torch.tensor(8.0))
+        self.alpha = nn.Parameter(torch.tensor(10.0))
+        self.layer_name = layer_name
 
     def forward(self, input):
-        #print("full pretrain in Qconv2d: %d" %(self.full_pretrain))
         if self.same_padding:
             ih, iw = input.size()[-2:]
             kh, kw = self.weight.size()[-2:]
@@ -472,13 +909,15 @@ class QConv2d(nn.Conv2d):
             weight.sub_(1.0)
         else:
             weight = self.weight * 1.0
-
-        if (bita < 32 and not self.weight_only) or self.pact_fp:
+        
+        if (bita < 32 and not self.weight_only and self.input_quant) or self.pact_fp:
             alpha = torch.abs(self.alpha)
             if self.double_side:
                 input_val = torch.where(input > -alpha, input, -alpha)
             else:
                 input_val = torch.relu(input)
+            
+            
             input_val = torch.where(input_val < alpha, input_val, alpha)
             if bita < 32 and not self.weight_only:
                 input_val.div_(alpha)
@@ -532,9 +971,15 @@ class QLinear(nn.Linear):
             weight = self.quant(weight, bitw, weight_quant_scheme)
             weight.mul_(2.0)
             weight.sub_(1.0)
+            #weight_scale = 1.0 / (self.out_features) ** 0.5
+            #weight_scale = weight_scale / torch.std(weight.detach())
+            #if self.training:
+            #weight.mul_(weight_scale)
         else:    
             weight = self.weight * 1.0
         bias = self.bias
+        #if bias is not None and not self.training and bitw < 32:
+        #bias = bias / weight_scale
 
         if (bita < 32 and not self.weight_only) or self.pact_fp:
             alpha = torch.abs(self.alpha)
@@ -547,354 +992,3 @@ class QLinear(nn.Linear):
         else:
             input_val = input
         return nn.functional.linear(input_val, weight, bias)
-
-def grad_scale(x, scale):
-    y = x
-    y_grad = x * scale
-    return y.detach() - y_grad.detach() + y_grad
-
-def round_pass(x):
-    y = x.round()
-    y_grad = x
-    return y.detach() - y_grad.detach() + y_grad
-
-class _ActQ(nn.Module):
-    def __init__(self, in_features, **kwargs_q):
-        super(_ActQ, self).__init__()
-        # self.kwargs_q = get_default_kwargs_q(kwargs_q, layer_type=self)
-        # self.nbits = kwargs_q['nbits']
-        # if self.nbits < 0:
-        #     self.register_parameter('alpha', None)
-        #     self.register_parameter('zero_point', None)
-        #     return
-        # self.signed = kwargs_q['signed']
-        # self.q_mode = kwargs_q['mode']
-        self.scale = nn.Parameter(torch.Tensor(1))
-        self.zero_point = nn.Parameter(torch.Tensor([0]))
-        # if self.q_mode == Qmodes.kernel_wise:
-        #     self.alpha = Parameter(torch.Tensor(in_features))
-        #     self.zero_point = Parameter(torch.Tensor(in_features))
-        #     torch.nn.init.zeros_(self.zero_point)
-        # self.zero_point = Parameter(torch.Tensor([0]))
-        self.register_buffer('init_state', torch.zeros(1))
-        self.register_buffer('signed', torch.zeros(1))
-
-    def add_param(self, param_k, param_v):
-        self.kwargs_q[param_k] = param_v
-
-    def set_bit(self, nbits):
-        self.kwargs_q['nbits'] = nbits
-
-class ActLSQ(_ActQ):
-    def __init__(self, in_features, nbits_a=4, mode='layer_wise', **kwargs):
-        super(ActLSQ, self).__init__(in_features=in_features, nbits=nbits_a, mode=mode)
-        # print(self.alpha.shape, self.zero_point.shape)
-        self.nbits = nbits_a
-    def forward(self, x):
-        if self.scale is None:
-            return x
-
-        if self.training and self.init_state == 0:
-            # The init alpha for activation is very very important as the experimental results shows.
-            # Please select a init_rate for activation.
-            # self.alpha.data.copy_(x.max() / 2 ** (self.nbits - 1) * self.init_rate)
-            if x.min() < -1e-5:
-                self.signed.data.fill_(1)
-            # print(self.signed)
-            if self.signed == 1:
-                Qn = -2 ** (self.nbits - 1)
-                Qp = 2 ** (self.nbits - 1) - 1
-            else:
-                Qn = 0
-                Qp = 2 ** self.nbits - 1
-            self.scale.data.copy_(2 * x.abs().mean() / math.sqrt(Qp))
-            self.zero_point.data.copy_(self.zero_point.data * 0.9 + 0.1 * (torch.min(x.detach()) - self.scale.data * Qn))
-            self.init_state.fill_(1)
-        
-        # print(self.signed)
-
-        if self.signed == 1:
-            Qn = -2 ** (self.nbits - 1)
-            Qp = 2 ** (self.nbits - 1) - 1
-        else:
-            Qn = 0
-            Qp = 2 ** self.nbits - 1
-
-        g = 1.0 / math.sqrt(x.numel() * Qp)
-
-        # Method1:
-        zero_point = (self.zero_point.round() - self.zero_point).detach() + self.zero_point
-        scale = grad_scale(self.scale, g)
-        zero_point = grad_scale(zero_point, g)
-        # x = round_pass((x / scale).clamp(Qn, Qp)) * scale
-        if len(x.shape)==2:
-            scale = scale.unsqueeze(0)
-            zero_point = zero_point.unsqueeze(0)
-        elif len(x.shape)==3:
-            if x.shape[0] == scale.shape[0]:
-                scale = scale.unsqueeze(1).unsqueeze(2)
-                zero_point = zero_point.unsqueeze(1).unsqueeze(2)
-            elif x.shape[1] == scale.shape[0]:
-                scale = scale.unsqueeze(0).unsqueeze(2)
-                zero_point = zero_point.unsqueeze(0).unsqueeze(2)
-            elif x.shape[2] == scale.shape[0]:
-                scale = scale.unsqueeze(0).unsqueeze(0)
-                zero_point = zero_point.unsqueeze(0).unsqueeze(0)
-        elif len(x.shape)==4:
-            # A, B, C, D = x.shape
-            if x.shape[0] == scale.shape[0]:
-                scale = scale.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-                zero_point = zero_point.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-            elif x.shape[1] == scale.shape[0]:
-                scale = scale.unsqueeze(0).unsqueeze(2).unsqueeze(3)
-                zero_point = zero_point.unsqueeze(0).unsqueeze(2).unsqueeze(3)
-            elif x.shape[2] == scale.shape[0]:
-                scale = scale.unsqueeze(0).unsqueeze(0).unsqueeze(3)
-                zero_point = zero_point.unsqueeze(0).unsqueeze(0).unsqueeze(3)
-            elif x.shape[3] == scale.shape[0]:
-                scale = scale.unsqueeze(0).unsqueeze(0).unsqueeze(0)
-                zero_point = zero_point.unsqueeze(0).unsqueeze(0).unsqueeze(0)
-
-        # print(scale.shape, zero_point.shape)
-        # print(x.shape)
-        x = round_pass((x / scale + zero_point).clamp(Qn, Qp))
-        x = (x - zero_point) * scale
-        # x = x.clamp(Qn, Qp)
-        # q_x = round_pass(x)
-        # x_q = q_x * scale
-
-        # Method2:
-        # x_q = FunLSQ.apply(x, self.scale, g, Qn, Qp)
-        return x
-
-class DRFLSQConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels,
-                 kernel_size, stride=1, padding=0, dilation=1,
-                 groups=1, bias=True,
-                 same_padding=False,
-                 bitw_min=None, bita_min=None,
-                 pact_fp=False,
-                 double_side=False,
-                 weight_only=False, full_pretrain=False,
-                 input_quant=True, layer_name = None):
-        super(DRFLSQConv2d, self).__init__(
-            in_channels, out_channels,
-            kernel_size, stride=stride,
-            padding=padding if not same_padding else 0,
-            dilation=dilation,
-            groups=groups, bias=bias)
-        self.same_padding = same_padding
-        self.bitw_min = bitw_min
-        self.bita_min = bita_min
-        self.pact_fp = pact_fp
-        self.double_side = double_side
-        self.weight_only = weight_only
-        self.input_quant = input_quant
-        self.quant = q_k.apply
-        self.full_pretrain = full_pretrain
-        self.alpha = nn.Parameter(torch.tensor(10.0))
-        self.layer_name = layer_name
-        
-        self.scale = nn.Parameter(torch.Tensor(1))
-        self.register_buffer('init_state', torch.zeros(1))
-        
-        self.act = ActLSQ(in_features=in_channels, nbits_a=bita_min)
-
-    def forward(self, input):
-        #print("full pretrain in Qconv2d: %d" %(self.full_pretrain))
-        bitw = self.bitw_min
-        bita = self.bita_min
-        if self.full_pretrain is True:
-            bitw = 32
-            bita = 32
-        weight_quant_scheme = 'original'
-        act_quant_scheme = 'original'
-
-        if bitw == 0:
-            return nn.Identity()(input)
-
-        # weight quant --> DoReFa
-        if bitw < 32:
-            #print("qted")
-            weight = torch.tanh(self.weight) / torch.max(torch.abs(torch.tanh(self.weight)))
-            weight.add_(1.0)
-            weight.div_(2.0)
-            weight = self.quant(weight, bitw, weight_quant_scheme)
-            weight.mul_(2.0)
-            weight.sub_(1.0)
-            # breakpoint()
-        else:
-            weight = self.weight * 1.0
-        # breakpoint()
-        
-        # activation quant --> LSQ+
-        if (bita < 32 and self.input_quant):
-            input_val = self.act(input)
-        else:
-            input_val = input
-        #print(self.bias)
-        #print(self.stride)
-        y = nn.functional.conv2d(
-            input_val, weight, bias=self.bias, stride=self.stride, padding=self.padding,
-            dilation=self.dilation, groups=self.groups)
-        return y
-
-
-class DRFQConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels,
-                 kernel_size, stride=1, padding=0, dilation=1,
-                 groups=1, bias=True,
-                 same_padding=False,
-                 bitw_min=None, bita_min=None,
-                 pact_fp=False,
-                 double_side=False,
-                 weight_only=False, full_pretrain=False,
-                 input_quant=True, layer_name = None):
-        super(DRFQConv2d, self).__init__(
-            in_channels, out_channels,
-            kernel_size, stride=stride,
-            padding=padding if not same_padding else 0,
-            dilation=dilation,
-            groups=groups, bias=bias)
-        self.same_padding = same_padding
-        self.bitw_min = bitw_min
-        self.bita_min = bita_min
-        self.pact_fp = pact_fp
-        self.double_side = double_side
-        self.weight_only = weight_only
-        self.input_quant = input_quant
-        self.wquant = q_k.apply
-        self.aquant = aq_k.apply
-        self.full_pretrain = full_pretrain
-        self.alpha = nn.Parameter(torch.tensor(10.0))
-        self.layer_name = layer_name
-
-    def forward(self, input):
-        #print("full pretrain in Qconv2d: %d" %(self.full_pretrain))
-        # padding 300 --> 302됨
-        if self.same_padding:
-            ih, iw = input.size()[-2:]
-            kh, kw = self.weight.size()[-2:]
-            sh, sw = self.stride
-            oh, ow = math.ceil(ih / sh), math.ceil(iw / sw)
-            pad_h = max((oh - 1) * self.stride[0] + (kh - 1) * self.dilation[0] + 1 - ih, 0)
-            pad_w = max((ow - 1) * self.stride[1] + (kw - 1) * self.dilation[1] + 1 - iw, 0)
-            if pad_h > 0 or pad_w > 0:
-                input = nn.functional.pad(input, [pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2])
-        bitw = self.bitw_min
-        bita = self.bita_min
-        if self.full_pretrain is True:
-            bitw = 32
-            bita = 32
-        weight_quant_scheme = 'original'
-        act_quant_scheme = 'original'
-
-        if bitw == 0:
-            return nn.Identity()(input)
-
-        if bitw < 32:
-            #print("qted")
-            weight = torch.tanh(self.weight) / torch.max(torch.abs(torch.tanh(self.weight)))
-            weight.add_(1.0)
-            weight.div_(2.0)
-            weight = self.wquant(weight, bitw, weight_quant_scheme)
-            weight.mul_(2.0)
-            weight.sub_(1.0)
-            # breakpoint()
-        else:
-            weight = self.weight * 1.0
-        print(self.layer_name, weight.max().item())
-        
-        if (bita < 32 and not self.weight_only and self.input_quant):
-            input_val = self.aquant(input, bita, act_quant_scheme)
-        else:
-            input_val = input
-        print(self.layer_name, input_val.max().item())
-        # breakpoint()
-        y = nn.functional.conv2d(
-            input_val, weight, bias=self.bias, stride=self.stride, padding=self.padding,
-            dilation=self.dilation, groups=self.groups)
-        return y
-
-
-class LSQConv2d(nn.Conv2d):
-    def __init__(self, in_channels, out_channels,
-                 kernel_size, stride=1, padding=0, dilation=1,
-                 groups=1, bias=True,
-                 same_padding=False,
-                 bitw_min=None, bita_min=None,
-                 double_side=False,
-                 weight_only=False, full_pretrain=False,
-                 input_quant=True, layer_name = None, unsigned=True, batch_init=20):
-        super(LSQConv2d, self).__init__(
-            in_channels, out_channels,
-            kernel_size, stride=stride,
-            padding=padding,
-            dilation=dilation,
-            groups=groups, bias=bias)
-        self.same_padding = same_padding
-        self.bitw_min = bitw_min
-        self.bita_min = bita_min
-        self.double_side = double_side
-        self.weight_only = weight_only
-        self.input_quant = input_quant
-        self.full_pretrain = full_pretrain
-        self.layer_name = layer_name
-        self.unsigned = unsigned
-        self.batch_init = batch_init
-        
-        self.scale = nn.Parameter(torch.Tensor(1))
-        self.register_buffer('init_state', torch.zeros(1))
-        
-        self.act = ActLSQ(in_features=in_channels, nbits_a=bita_min)
-        
-        # self.activation_quantizer = LSQPlusActivationQuantizer(a_bits=bita_min, all_positive=unsigned,batch_init = batch_init)
-        # self.weight_quantizer = LSQPlusWeightQuantizer(w_bits=bitw_min, all_positive=unsigned, per_channel=True,batch_init = batch_init)
-        
-    def forward(self, input):
-        #print("full pretrain in Qconv2d: %d" %(self.full_pretrain))
-        # padding 300 --> 302됨
-        bitw = self.bitw_min
-        bita = self.bita_min
-        if self.full_pretrain:
-            bitw = 32
-            bita = 32
-        # breakpoint()
-        if bitw == 0:
-            return nn.Identity()(input)
-        weight_quant_scheme = 'original'
-        act_quant_scheme = 'original'
-        
-        if bitw < 32:
-            # weight = self.weight_quantizer(self.weight)
-            Qn = -2 ** (bitw - 1)
-            Qp = 2 ** (bitw - 1) - 1
-            if self.training and self.init_state == 0:
-                # self.scale.data.copy_(self.weight.abs().max() / 2 ** (self.nbits - 1))
-                if Qp >0:
-                    self.scale.data.copy_(2 * self.weight.abs().mean() / math.sqrt(Qp))
-                else:
-                    self.scale.data.copy_(2 * self.weight.abs().mean() / math.sqrt(Qp+1))
-                # self.scale.data.copy_(self.weight.abs().max() * 2)
-                self.init_state.fill_(1)
-            
-            g = 1.0 / math.sqrt(self.weight.numel() * Qp) if Qp>0 else 1.0 / math.sqrt(self.weight.numel())
-            
-            scale = grad_scale(self.scale, g)
-            scale = scale.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-            # breakpoint()
-            weight = round_pass((self.weight / scale).clamp(Qn, Qp)) * scale
-        else:
-            weight = self.weight * 1.0
-        # breakpoint()
-        
-        if (bita < 32 and self.input_quant):
-            input_val = self.act(input)
-        else:
-            input_val = input
-        #print(self.bias)
-        #print(self.stride)
-        y = nn.functional.conv2d(
-            input_val, weight, bias=self.bias, stride=self.stride, padding=self.padding,
-            dilation=self.dilation, groups=self.groups)
-        return y

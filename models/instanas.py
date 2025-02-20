@@ -196,6 +196,7 @@ class InstaNas(nn.Module):
     def _make_action_QT(self, inp, oup, exp, stride, id, version, full_pretrain, 
                         layer_name=None, ActQ="PACT", wbit=8, abit=None):
         action_bit = abit
+        # breakpoint()
         print("ActQ is " + ActQ + " in make_action_QT!!!")
         if action_bit == 0:
             raise ValueError(" [*] No such action index")
@@ -402,12 +403,12 @@ class QT_MobileNet_V1(InstaNas):
             self.num_classes = 1000
         self.conv1 = base.QconvBlock(in_planes=3, out_planes=32, kernel=3, stride=2, padding=1, 
                                      wbit=self.wbit, abit=self.abit, weight_only=True, 
-                                     same_padding=True, full_pretrain=full_pretrain, 
+                                     same_padding=False, full_pretrain=full_pretrain, 
                                      layer_name='conv1', ActQ=ActQ)
         self.layers = self._make_layers_QT(in_planes=32, version='V1', 
                                            full_pretrain=full_pretrain, ActQ=ActQ, abit=abit)
         self.conv2 = None
-        self.linear = base.QLinearBlock(1024, self.num_classes, wbit=self.wbit, abit=self.abit, weight_only=True, full_pretrain=full_pretrain)
+        # self.linear = base.QLinearBlock(1024, self.num_classes, wbit=self.wbit, abit=self.abit, weight_only=True, full_pretrain=full_pretrain)
         # self._profile(input_size=32)
 
 class LQT_MobileNet_V1_224(InstaNas):

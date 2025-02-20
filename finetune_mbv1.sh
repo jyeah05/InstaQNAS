@@ -4,9 +4,9 @@ python search_multinomial.py  \
 --ActQ 'LSQ+' \
 --num_classes 21 \
 --finetune_only \
---cv_dir '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/fine-tune' \
---instassd_chkpt '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/search/latest.pth.tar' \
---agent_chkpt '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/search/latest.pth.tar' \
+--cv_dir '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/fine-tune' \
+--instassd_chkpt '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
+--agent_chkpt '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/search/latest.pth.tar' \
 --retraining 'True' \
 --resume \
 --sample_eval_path './prec_thre06/sample_eval_test' \

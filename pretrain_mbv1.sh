@@ -1,9 +1,9 @@
 python pretrain_ssd.py --data VOC \
 --arch base \
 --batch_size 128 \
---save '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/pretrained' \
+--save '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/pretrained' \
 --resume \
---resume_path '/SHARE_ST/capp_storage/jeesak_dir/InstaNasWACV/MBv1-SSD/pretrained/FP/model_best.pth.tar' \
+--resume_path '/SHARE_ST/capp_storage/jeesak_dir/InstaQNAS/MBv1-SSD/pretrained/FP/model_best.pth.tar' \
 --from_fp_pretrain \
 --retraining 'True'  \
 --lr 5e-4  \
