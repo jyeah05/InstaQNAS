@@ -173,16 +173,13 @@ def train_val_test():
                 args.start_epoch = checkpoint['epoch'] + 1
             
             model = getModel(**vars(args))
-            breakpoint()
             # model(dummy_input, dummy_policy)
             if args.arch_type == 'V1+SSD':
-                # breakpoint()
                 if args.from_fp_pretrain:
                     ckpt_to_load = checkpoint['state_dict']
                     fp = [0, 1, 2, 3, 4,  5,  6,  7,  8,  9,  10, 11, 12]
-                    # qt = [0, 1, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19]
                     qt = [0, 1, 2, 3, 4,  5,  6,  7,  8,  9,  10, 11, 12]
-                    # breakpoint()
+
                     # layer 1~13
                     for lidx in range(len(qt)):
                         for bidx in range(len(args.action_list)):
@@ -217,12 +214,10 @@ def train_val_test():
                             ckpt_to_load[qt_name_b] = checkpoint['state_dict'][pt_name_b]
                             ckpt_to_load[qt_name_rm] = checkpoint['state_dict'][pt_name_rm]
                             ckpt_to_load[qt_name_rv] = checkpoint['state_dict'][pt_name_rv]
-                    # breakpoint()
-         
+       
                    
                 else:
                     fp = [1, 2, 3, 4,  5,  6,  7,  8,  9,  10, 11, 12, 13]
-                    # qt = [0, 1, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19]
                     qt = [0, 1, 2, 3, 4,  5,  6,  7,  8,  9,  10, 11, 12]
                     ckpt_to_load = dict()
                     # conv1
@@ -319,11 +314,8 @@ def train_val_test():
                 if args.from_fp_pretrain:
                     
                     fp = [1, 2, 3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16]
-                    # qt = [0, 1, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19]
                     qt = [1, 2, 3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16]
                     
-                    # breakpoint()
-                    # ckpt_to_load = dict()
                     ckpt_to_load = checkpoint['state_dict']
                     print("=> loaded checkpoint '{}' (epoch {})"
                         .format(args.resume, checkpoint['epoch']))
@@ -743,42 +735,9 @@ def train_val_test():
                     ckpt_to_load[qt_name_w] = checkpoint[pt_name_w]
                     ckpt_to_load[qt_name_b] = checkpoint[pt_name_b]
                     
-            # pact alpha init
-            if args.pact_alpha_init:
-                # breakpoint()
-                alpha_init_dict = {
-                    'module.extras.0.0.conv_q.conv.alpha':10,
-                    'module.extras.0.1.conv_q.conv.alpha':10,
-                    'module.extras.1.0.conv_q.conv.alpha':20,
-                    'module.extras.1.1.conv_q.conv.alpha':20,
-                    'module.extras.2.0.conv_q.conv.alpha':30,
-                    'module.extras.2.1.conv_q.conv.alpha':30,
-                    'module.extras.3.0.conv_q.conv.alpha':80,
-                    'module.extras.3.1.conv_q.conv.alpha':80,
-                    'module.classification_headers.0.conv_q.conv.alpha':10,
-                    'module.classification_headers.1.conv_q.conv.alpha':20,
-                    'module.classification_headers.2.conv_q.conv.alpha':30,
-                    'module.classification_headers.3.conv_q.conv.alpha':80,
-                    'module.classification_headers.4.conv_q.conv.alpha':100,
-                    'module.classification_headers.5.conv_q.conv.alpha':100,
-                    'module.regression_headers.0.conv_q.conv.alpha':10,
-                    'module.regression_headers.1.conv_q.conv.alpha':20,
-                    'module.regression_headers.2.conv_q.conv.alpha':30,
-                    'module.regression_headers.3.conv_q.conv.alpha':80,
-                    'module.regression_headers.4.conv_q.conv.alpha':100,
-                    'module.regression_headers.5.conv_q.conv.alpha':100,
-                    
-                }
-                for key, val in ckpt_to_load.items():
-                    if key in alpha_init_dict.keys():
-                        ckpt_to_load[key] = torch.tensor(alpha_init_dict[key]).to(val.device)
-            
             # breakpoint()
             model.load_state_dict(ckpt_to_load, strict=False)
-            # breakpoint()
             
-            # import pdb; pdb.set_trace()
-            # check if there is any wrong copy of checkpoint
             load_check = 0
             load_add_key_check = 0
             load_miss_key_check = 0
@@ -793,20 +752,6 @@ def train_val_test():
                     if('weight' in k or 'bias' in k or 'running' in k):
                         print('there is additional key in model: [' +k +']')
             print('=====> there is {} additional keys in model'.format(load_add_key_check))
-                
-            if args.init_tracking:
-                # 아래 코드: tracked_min(max) 모두 0으로 초기화
-                #    --> iter_count를 buffer에 넣으면 초기화할 필요 있나?
-                print('retraining... make tracked_min(max) zero')
-                for k in model.state_dict().keys():
-                    if 'tracked' in k or 'iter_count' in k:
-                        attr_list = k.split('.')
-                        # 해당 buffer_name에 접근
-                        gattr = getattr(model, attr_list[0])
-                        for i in range(1, len(attr_list) - 1):
-                            gattr = getattr(gattr, attr_list[i])
-                        setattr(gattr, attr_list[-1], torch.zeros(1).cuda())
-            
             
         else:
             print(
@@ -828,8 +773,7 @@ def train_val_test():
     if args.freeze_basenet is True:
         model.module.freeze_base_param()
     cudnn.benchmark = True
-    # breakpoint()
-    # import pdb; pdb.set_trace()
+
     if 'V1' in args.arch_type or 'CAPP' in args.arch_type:
         predictor = create_mobilenetv1_ssd_predictor(model, ssd_config.config)
     elif 'V2' in args.arch_type:
