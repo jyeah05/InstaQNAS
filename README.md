@@ -17,8 +17,9 @@ To reduce computational redundancy inherent in fixed-bit-width quantization, inp
     * L562, 575, 715 in `search_multinomial.py`
     * L843 in `pretrain_ssd.py`
     * L162, 165 in `dataloader.py`
-    * checkpoint arguments in shell scripts
-* Prepare pytorch environment
+    * checkpoint arguments in shell scriptsi
+* Please prepare pytorch environment
+* Please prepare VOC07+12 dataset
 
 ### 1. Pretrain(Action)
 * Pretrain main network with randomly generated policies.
@@ -29,12 +30,23 @@ sh pretrain_mbv1_fp.sh
 sh pretrain_mbv1.sh
 ``` 
 ### 2. Search(Exploration)
-* Train policy network to search the optimized main network bit policies.
+* Train policy network to search the optimal bit policies for the main network.
 ```shell
 sh search_mbv1.sh
 ```
 ### 3. Finetune
 * Finetune the main networks with searched policies.
 ```shell
-sh finetuen_mbv1.sh
+sh finetune_mbv1.sh
+```
+
+### Citation
+* If you find our repository useful, please cite our paper in your publications:
+```shell
+@article{jeong2025instaqnas,
+  title={Input-Adaptive Mixed-Precision Framework for Efficient Object Detection},
+  author={Jeong, Issac and Jeon, Ji-Ye and Kim, Kihwan and Jeon, Dongsuk and Lee, Hyuk-Jae},
+  booktitle={IEEE International Symposium on Circuits and Systems (ISCAS)},
+  year={2025}
+}
 ```
